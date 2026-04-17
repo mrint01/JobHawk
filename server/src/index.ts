@@ -44,30 +44,35 @@ app.use('/api/auth', authRouter)
 app.use('/api/scrape', scrapeRouter)
 app.use('/api/jobs', jobsRouter)
 
-// ── Debug: view latest Puppeteer screenshot ───────────────────────────────────
-// Temporary endpoint — remove once debugging is done.
-// Lists all /tmp/*.png files or serves the latest one.
-app.get('/api/debug/screenshots', (_req, res) => {
+// ── Debug: view Puppeteer screenshots ────────────────────────────────────────
+app.get('/api/debug/screenshots', (req, res) => {
   try {
     const files = fs.readdirSync('/tmp')
       .filter((f) => f.endsWith('.png'))
       .map((f) => ({ name: f, mtime: fs.statSync(path.join('/tmp', f)).mtimeMs }))
       .sort((a, b) => b.mtime - a.mtime)
-    res.json({ files: files.map((f) => `/api/debug/screenshot/${f.name}`) })
-  } catch {
-    res.json({ files: [] })
+    const links = files.map((f) => `https://${req.headers.host}/api/debug/screenshot/${f.name}`)
+    res.json({ count: files.length, files: links })
+  } catch (err) {
+    res.json({ count: 0, files: [], error: String(err) })
   }
 })
 
 app.get('/api/debug/screenshot/:filename', (req, res) => {
-  const filename = path.basename(req.params.filename)
-  const filepath = path.join('/tmp', filename)
-  if (!fs.existsSync(filepath)) {
-    res.status(404).json({ error: 'File not found' })
-    return
+  try {
+    const filename = path.basename(String(req.params.filename))
+    const filepath = path.join('/tmp', filename)
+    if (!fs.existsSync(filepath)) {
+      res.status(404).json({ error: 'File not found', looked: filepath })
+      return
+    }
+    const data = fs.readFileSync(filepath)
+    res.setHeader('Content-Type', 'image/png')
+    res.setHeader('Content-Length', data.length)
+    res.end(data)
+  } catch (err) {
+    res.status(500).json({ error: String(err) })
   }
-  res.setHeader('Content-Type', 'image/png')
-  res.sendFile(filepath)
 })
 
 // ── Start ─────────────────────────────────────────────────────────────────────

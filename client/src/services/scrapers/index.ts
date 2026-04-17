@@ -70,7 +70,8 @@ export function scrapeAll(
       })
     }
 
-    for (const p of platforms) state[p].status = 'running'
+    // Server executes scrapers sequentially; keep others pending until their first progress event.
+    if (platforms.length > 0) state[platforms[0]].status = 'running'
     emit(true)
 
     const qs = new URLSearchParams({
@@ -109,6 +110,7 @@ export function scrapeAll(
               switch (evt.type as string) {
                 case 'progress':
                   if (platform) {
+                    if (state[platform].status === 'pending') state[platform].status = 'running'
                     state[platform].progress = (evt.progress as number | undefined) ?? state[platform].progress
                     emit(true)
                   }

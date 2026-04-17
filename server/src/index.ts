@@ -2,7 +2,7 @@ import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
 import scrapeRouter from './routes/scrape'
-import authRouter from './routes/auth'
+import authRouter, { AUTH_MODE } from './routes/auth'
 import jobsRouter from './routes/jobs'
 import { allSessions } from './utils/sessions'
 import { closeBrowser } from './utils/browser'
@@ -34,6 +34,7 @@ app.get('/api/health', (_req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     connectedPlatforms: Object.keys(allSessions()),
+    authMode: AUTH_MODE,
   })
 })
 

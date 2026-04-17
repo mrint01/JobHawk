@@ -13,11 +13,19 @@ export interface ConnectResult {
   ok: boolean
   username?: string
   error?: string
+  requiresLinkedInCookie?: boolean
 }
 
 export interface HealthResult {
   online: boolean
   connectedPlatforms: PlatformId[]
+  authMode: 'manual' | 'headless'
+}
+
+export interface ConnectPayload {
+  email?: string
+  password?: string
+  token?: string
 }
 
 // ── Health ────────────────────────────────────────────────────────────────────
@@ -25,11 +33,15 @@ export interface HealthResult {
 export async function fetchHealth(): Promise<HealthResult> {
   try {
     const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(4000) })
-    if (!res.ok) return { online: false, connectedPlatforms: [] }
-    const data = await res.json() as { connectedPlatforms?: PlatformId[] }
-    return { online: true, connectedPlatforms: data.connectedPlatforms ?? [] }
+    if (!res.ok) return { online: false, connectedPlatforms: [], authMode: 'manual' }
+    const data = await res.json() as { connectedPlatforms?: PlatformId[]; authMode?: 'manual' | 'headless' }
+    return {
+      online: true,
+      connectedPlatforms: data.connectedPlatforms ?? [],
+      authMode: data.authMode ?? 'manual',
+    }
   } catch {
-    return { online: false, connectedPlatforms: [] }
+    return { online: false, connectedPlatforms: [], authMode: 'manual' }
   }
 }
 
@@ -37,14 +49,13 @@ export async function fetchHealth(): Promise<HealthResult> {
 
 export async function connectPlatformApi(
   platform: PlatformId,
-  email?: string,
-  password?: string,
+  payload?: ConnectPayload,
 ): Promise<ConnectResult> {
   try {
     const res = await fetch(`${BASE}/api/auth/${platform}/connect`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify(payload ?? {}),
       signal: AbortSignal.timeout(15 * 60_000), // allow manual login flow
     })
     return await res.json() as ConnectResult

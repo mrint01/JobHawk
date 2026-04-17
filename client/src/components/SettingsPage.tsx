@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Sun, Moon, KeyRound, AlertCircle, CheckCircle,
   Check, Unlink, Wifi, Loader2, Eye, EyeOff, WifiOff,
@@ -260,7 +260,14 @@ const PLATFORM_META: Record<
 }
 
 function PlatformCard({ platform }: { platform: Platform }) {
-  const { appState, connectPlatform, disconnectPlatform, platformConnecting, serverOnline } = useApp()
+  const {
+    appState,
+    connectPlatform,
+    disconnectPlatform,
+    platformConnecting,
+    serverOnline,
+    authMode,
+  } = useApp()
   const meta = PLATFORM_META[platform]
 
   const connected =
@@ -270,8 +277,70 @@ function PlatformCard({ platform }: { platform: Platform }) {
 
   const isConnecting = platformConnecting === platform
 
-  async function handleConnect() {
-    await connectPlatform(platform)
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [token, setToken] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [inlineError, setInlineError] = useState('')
+  const [linkedinCookieFallback, setLinkedinCookieFallback] = useState(false)
+  const [formOpen, setFormOpen] = useState(false)
+
+  useEffect(() => {
+    setInlineError('')
+    setLinkedinCookieFallback(false)
+    setToken('')
+    setPassword('')
+    setFormOpen(false)
+  }, [platform, authMode, connected])
+
+  async function handleConnectClick() {
+    if (authMode === 'manual') {
+      await connectPlatform(platform)
+      return
+    }
+    setFormOpen((v) => !v)
+  }
+
+  async function handleLoginSubmit() {
+    setInlineError('')
+
+    if (authMode !== 'headless') {
+      return
+    }
+
+    if (platform === 'linkedin' && linkedinCookieFallback) {
+      if (!token.trim()) {
+        setInlineError('Please paste your LinkedIn li_at token.')
+        return
+      }
+      const result = await connectPlatform(platform, { token: token.trim() })
+      if (!result.ok) {
+        setInlineError(result.error ?? 'LinkedIn token connection failed.')
+      } else {
+        setFormOpen(false)
+      }
+      return
+    }
+
+    if (!email.trim() || !password.trim()) {
+      setInlineError('Email and password are required.')
+      return
+    }
+
+    const result = await connectPlatform(platform, { email: email.trim(), password })
+    if (!result.ok) {
+      if (platform === 'linkedin' && result.requiresLinkedInCookie) {
+        setLinkedinCookieFallback(true)
+        setFormOpen(true)
+        setInlineError(result.error ?? 'LinkedIn requested CAPTCHA/challenge. Use token fallback below.')
+      } else {
+        setInlineError(result.error ?? 'Connection failed.')
+      }
+      return
+    }
+
+    setInlineError('')
+    setFormOpen(false)
   }
 
   return (
@@ -325,36 +394,144 @@ function PlatformCard({ platform }: { platform: Platform }) {
                 Not connected
               </span>
               <button
-                onClick={handleConnect}
+                onClick={handleConnectClick}
                 disabled={!serverOnline}
                 title={!serverOnline ? 'Start the backend server first' : undefined}
                 className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
                 style={{ backgroundColor: meta.color }}
               >
                 <Wifi className="w-3.5 h-3.5" />
-                Connect
+                {authMode === 'manual'
+                  ? 'Connect'
+                  : formOpen ? 'Hide Form' : 'Connect'}
               </button>
             </>
           )}
         </div>
       </div>
 
-      {/*!connected && !isConnecting && (
+      {!connected && !isConnecting && authMode === 'manual' && (
         <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">
-          Clicking connect opens a browser window for manual sign-in. After successful login, the window closes and this platform becomes connected.
+          Clicking connect opens a browser window for manual sign-in.
         </p>
-      )*/}
+      )}
+
+      {!connected && !isConnecting && authMode === 'headless' && formOpen && (
+        <div className="mt-4 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-900/40 p-3.5 space-y-3">
+          {platform === 'linkedin' && linkedinCookieFallback ? (
+            <>
+              <div className="rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 p-3">
+                <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
+                  LinkedIn challenge detected. Use token fallback.
+                </p>
+                <p className="mt-1 text-xs text-blue-700 dark:text-blue-300/80">
+                  Open LinkedIn while logged in, press F12, then go to Application {'->'} Cookies {'->'} https://www.linkedin.com and copy the <code className="font-mono">li_at</code> value.
+                </p>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
+                  LinkedIn li_at token
+                </label>
+                <input
+                  type="text"
+                  className="input"
+                  placeholder="Paste li_at token"
+                  value={token}
+                  onChange={(e) => setToken(e.target.value)}
+                />
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
+                  Email
+                </label>
+                <input
+                  type="email"
+                  className="input"
+                  placeholder="you@example.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  autoComplete="username"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
+                  Password
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    className="input pr-10"
+                    placeholder="Your password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    autoComplete="current-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+              {platform === 'linkedin' && (
+                <p className="text-xs text-gray-500 dark:text-slate-400">
+                  If LinkedIn blocks automated login (CAPTCHA/challenge), we will switch you to secure token fallback.
+                </p>
+              )}
+            </>
+          )}
+
+          {inlineError && (
+            <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-3 py-2">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              {inlineError}
+            </div>
+          )}
+
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button
+              type="button"
+              onClick={() => {
+                setFormOpen(false)
+                setInlineError('')
+              }}
+              className="btn-secondary text-xs px-3 py-1.5"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleLoginSubmit}
+              disabled={!serverOnline}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ backgroundColor: meta.color }}
+            >
+              <KeyRound className="w-3.5 h-3.5" />
+              {platform === 'linkedin' && linkedinCookieFallback ? 'Save Token' : 'Login'}
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
 function PlatformSection() {
-  const { connectedPlatforms } = useApp()
+  const { connectedPlatforms, authMode } = useApp()
 
   return (
     <Section
       title="Platform Connections"
-      description={`Connect the job boards you want to scrape. ${connectedPlatforms.length}/3 connected.`}
+      description={
+        authMode === 'manual'
+          ? `Manual browser login mode. ${connectedPlatforms.length}/3 connected.`
+          : `Headless credential mode. ${connectedPlatforms.length}/3 connected.`
+      }
     >
       <div className="space-y-3">
         <PlatformCard platform="linkedin" />

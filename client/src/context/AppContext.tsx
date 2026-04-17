@@ -15,6 +15,8 @@ import {
   clearJobsApi,
   clearJobOffersApi,
   type PlatformId,
+  type ConnectPayload,
+  type ConnectResult,
 } from '../services/api'
 
 export interface Toast {
@@ -32,6 +34,7 @@ interface AppContextValue {
 
   // Backend health
   serverOnline: boolean
+  authMode: 'manual' | 'headless'
 
   // Theme
   theme: Theme
@@ -47,7 +50,7 @@ interface AppContextValue {
   toggleSidebar: () => void
 
   // Platform connections (delegate to backend)
-  connectPlatform: (p: Platform, email?: string, password?: string) => Promise<boolean>
+  connectPlatform: (p: Platform, payload?: ConnectPayload) => Promise<ConnectResult>
   disconnectPlatform: (p: Platform) => Promise<void>
   connectedPlatforms: Platform[]
   platformConnecting: Platform | null
@@ -82,6 +85,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activePage, setActivePage] = useState<ActivePage>('dashboard')
   const [serverOnline, setServerOnline] = useState(false)
+  const [authMode, setAuthMode] = useState<'manual' | 'headless'>('manual')
   const [platformConnecting, setPlatformConnecting] = useState<Platform | null>(null)
   const jobsLoadedRef = useRef(false)
 
@@ -112,6 +116,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       const result = await fetchHealth()
       if (cancelled) return
       setServerOnline(result.online)
+      setAuthMode(result.authMode)
 
       if (result.online) {
         // Sync platform connection state from server sessions
@@ -144,10 +149,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ...(appState.xingConnected      ? ['xing']      as Platform[] : []),
   ]
 
-  const connectPlatform = useCallback(async (p: Platform, email?: string, password?: string): Promise<boolean> => {
+  const connectPlatform = useCallback(async (p: Platform, payload?: ConnectPayload): Promise<ConnectResult> => {
     setPlatformConnecting(p)
     try {
-      const result = await connectPlatformApi(p as PlatformId, email, password)
+      const result = await connectPlatformApi(p as PlatformId, payload)
       if (result.ok) {
         setAppState((s) => ({
           ...s,
@@ -157,10 +162,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         }))
         const label = p === 'linkedin' ? 'LinkedIn' : p === 'stepstone' ? 'StepStone' : 'Xing'
         addToast(`${label} connected!`, 'success')
-        return true
+        return result
       } else {
         addToast(result.error ?? 'Connection failed', 'error')
-        return false
+        return result
       }
     } finally {
       setPlatformConnecting(null)
@@ -271,6 +276,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
     try {
       await scrapeAll(params, platforms, (p) => setScrapeProgress(p))
+      // Re-sync sessions (e.g. server clears LinkedIn after invalid cookie / redirect loop)
+      const health = await fetchHealth()
+      if (health.online) {
+        setAppState((s) => ({
+          ...s,
+          linkedinConnected: health.connectedPlatforms.includes('linkedin'),
+          stepstonConnected: health.connectedPlatforms.includes('stepstone'),
+          xingConnected: health.connectedPlatforms.includes('xing'),
+        }))
+      }
       // Server saved jobs during scraping — fetch the updated list
       const updated = await fetchJobsApi()
       if (updated !== null) {
@@ -299,7 +314,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   return (
     <AppContext.Provider value={{
       appState, login, logout, changePassword,
-      serverOnline,
+      serverOnline, authMode,
       theme, setTheme,
       activePage, setActivePage,
       sidebarOpen, setSidebarOpen, toggleSidebar,

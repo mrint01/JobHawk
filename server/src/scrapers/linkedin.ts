@@ -11,9 +11,10 @@
  *   immediately skipped → every job was dropped → 0 results.
  *   Fix: deduplicate by jobId AFTER we have confirmed a valid title.
  */
-import path from 'path'
+import type { Protocol } from 'puppeteer'
 import { getBrowserPage, sleep } from '../utils/browser'
-import { getSession } from '../utils/sessions'
+import { sanitizeLinkedInCookiesForReplay } from '../utils/linkedinCookies'
+import { clearSession, getSession, saveSession } from '../utils/sessions'
 import { subHours, subDays } from 'date-fns'
 import type { ScrapedJob, ProgressCallback } from './types'
 import { limitScrapedJobs } from './limits'
@@ -72,10 +73,86 @@ function parseLinkedInDate(raw: string): string {
   return isNaN(d.getTime()) ? '' : d.toISOString()
 }
 
-async function saveScreenshot(page: import('puppeteer').Page, name: string) {
-  const p = path.join('/tmp', name)
-  await page.screenshot({ path: p }).catch(() => {})
-  console.log(`[linkedin] screenshot → ${p}`)
+function isLinkedInRedirectLoopError(message: string): boolean {
+  return message.includes('ERR_TOO_MANY_REDIRECTS') || message.includes('too many redirects')
+}
+
+async function isLinkedInRateLimitedPage(page: import('puppeteer').Page): Promise<boolean> {
+  const title = (await page.title().catch(() => '')).toLowerCase()
+  if (
+    title.includes('429')
+    || title.includes('too many requests')
+    || title.includes("this page isn't working")
+    || title.includes('this page isn’t working')
+  ) return true
+
+  const body = await page.evaluate(() => (document.body?.innerText ?? '').slice(0, 7000)).catch(() => '')
+  const hay = body.toLowerCase()
+  return (
+    hay.includes('http error 429')
+    || hay.includes('too many requests')
+    || hay.includes("this page isn't working")
+    || hay.includes('this page isn’t working')
+  )
+}
+
+async function persistLinkedInSessionFromPage(
+  page: import('puppeteer').Page,
+  username: string,
+): Promise<void> {
+  try {
+    const cookies = await page.cookies('https://www.linkedin.com', 'https://linkedin.com')
+    const sanitized = sanitizeLinkedInCookiesForReplay(cookies as Protocol.Network.CookieParam[])
+    if (!sanitized.some((c) => c.name === 'li_at' && c.value.length > 0)) return
+    saveSession('linkedin', { cookies: sanitized, loggedInAt: new Date(), username })
+    console.log(`[linkedin] persisted ${sanitized.length} LinkedIn cookies for next scrape`)
+  } catch {
+    // ignore
+  }
+}
+
+async function gotoLinkedInJobSearch(page: import('puppeteer').Page, url: string): Promise<void> {
+  const attempts: Array<{ label: string; fn: () => Promise<void> }> = [
+    {
+      label: 'direct jobs',
+      fn: async () => {
+        await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 35_000 })
+      },
+    },
+    {
+      label: 'feed then jobs',
+      fn: async () => {
+        await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+        await page.goto('https://www.linkedin.com/feed/', { waitUntil: 'domcontentloaded', timeout: 30_000 })
+        await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 35_000 })
+      },
+    },
+    {
+      label: 'jobs no referer',
+      fn: async () => {
+        await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+        await page.goto(url, { waitUntil: 'networkidle2', timeout: 40_000 })
+      },
+    },
+  ]
+
+  let lastErr: Error | null = null
+  for (const attempt of attempts) {
+    try {
+      await attempt.fn()
+      if (attempt.label !== 'direct jobs') {
+        console.log(`[linkedin] job navigation ok via: ${attempt.label}`)
+      }
+      return
+    } catch (err) {
+      const e = err instanceof Error ? err : new Error(String(err))
+      lastErr = e
+      if (!isLinkedInRedirectLoopError(e.message)) throw e
+      console.warn(`[linkedin] job navigation failed (${attempt.label}): ${e.message}`)
+    }
+  }
+  throw lastErr ?? new Error('LinkedIn navigation failed')
 }
 
 function isBlockedLinkedInUrl(url: string): boolean {
@@ -371,8 +448,19 @@ export async function scrapeLinkedIn(
   let page = null
   try {
     page = await getBrowserPage(false)
+    const replayCookies = sanitizeLinkedInCookiesForReplay(session.cookies as Protocol.Network.CookieParam[])
+    const hasLiAtInStore = replayCookies.some((c) => c.name === 'li_at' && c.value.length > 0)
+    if (!hasLiAtInStore) {
+      clearSession('linkedin')
+      onProgress({
+        type: 'error',
+        platform: 'linkedin',
+        error: 'Stored LinkedIn token is missing/invalid. Reconnect LinkedIn with a fresh li_at token in Settings.',
+      })
+      return []
+    }
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await page.setCookie(...(session.cookies as any[]))
+    await page.setCookie(...(replayCookies as any[]))
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
 
     onProgress({ type: 'progress', platform: 'linkedin', progress: 10 })
@@ -387,16 +475,27 @@ export async function scrapeLinkedIn(
     const searchUrl = `https://www.linkedin.com/jobs/search/?${params}`
     console.log('[linkedin] navigating →', searchUrl)
 
-    await page.goto(searchUrl, { waitUntil: 'domcontentloaded', timeout: 35_000 })
+    await gotoLinkedInJobSearch(page, searchUrl)
 
     const currentUrl = page.url()
+    if (await isLinkedInRateLimitedPage(page)) {
+      onProgress({
+        type: 'error',
+        platform: 'linkedin',
+        error: 'LinkedIn is rate limiting this session (HTTP 429). Wait 15-30 minutes, then retry.',
+      })
+      return []
+    }
     if (isBlockedLinkedInUrl(currentUrl)) {
-      await saveScreenshot(page, 'linkedin-blocked.png')
-      onProgress({ type: 'error', platform: 'linkedin', error: 'Session expired or security check. Re-connect LinkedIn in Settings.' })
+      clearSession('linkedin')
+      onProgress({
+        type: 'error',
+        platform: 'linkedin',
+        error: 'LinkedIn redirected to login/checkpoint. Session cleared — reconnect with a fresh li_at token.',
+      })
       return []
     }
 
-    await saveScreenshot(page, 'linkedin-after-load.png')
     onProgress({ type: 'progress', platform: 'linkedin', progress: 25 })
 
     // ── Poll until job cards appear (max ~21 s) ───────────────────────────────
@@ -405,8 +504,12 @@ export async function scrapeLinkedIn(
     for (let i = 0; i < 14; i++) {
       await sleep(1500)
       if (isBlockedLinkedInUrl(page.url())) {
-        await saveScreenshot(page, 'linkedin-blocked-during-poll.png')
-        onProgress({ type: 'error', platform: 'linkedin', error: 'LinkedIn redirected to login/security page during scrape. Re-connect LinkedIn.' })
+        clearSession('linkedin')
+        onProgress({
+          type: 'error',
+          platform: 'linkedin',
+          error: 'LinkedIn redirected to login/security during scrape. Session cleared — reconnect in Settings.',
+        })
         return []
       }
 
@@ -429,7 +532,14 @@ export async function scrapeLinkedIn(
     }
 
     if (jobCardCount === 0) {
-      await saveScreenshot(page, 'linkedin-no-results.png')
+      if (await isLinkedInRateLimitedPage(page)) {
+        onProgress({
+          type: 'error',
+          platform: 'linkedin',
+          error: 'LinkedIn returned HTTP 429 instead of jobs. Wait 15-30 minutes before next scrape.',
+        })
+        return []
+      }
       onProgress({
         type: 'error',
         platform: 'linkedin',
@@ -476,8 +586,12 @@ export async function scrapeLinkedIn(
     let stuck = 0
     for (let round = 0; round < 50; round++) {
       if (isBlockedLinkedInUrl(page.url())) {
-        await saveScreenshot(page, 'linkedin-blocked-during-scroll.png')
-        onProgress({ type: 'error', platform: 'linkedin', error: 'LinkedIn redirected to login/security page during scrolling. Re-connect LinkedIn.' })
+        clearSession('linkedin')
+        onProgress({
+          type: 'error',
+          platform: 'linkedin',
+          error: 'LinkedIn redirected to login/security during scrolling. Session cleared — reconnect in Settings.',
+        })
         return []
       }
 
@@ -563,7 +677,6 @@ export async function scrapeLinkedIn(
     const rawJobs = Array.from(collectedByUrl.values())
 
     console.log(`[linkedin] extracted ${rawJobs.length} jobs`)
-    if (rawJobs.length === 0) await saveScreenshot(page, 'linkedin-extract-empty.png')
 
     const normalized = rawJobs.map((j) => ({
       ...j,
@@ -573,13 +686,25 @@ export async function scrapeLinkedIn(
       `[linkedin] normalized postedDate for ${normalized.filter((j) => !!j.postedDate).length}/${normalized.length} jobs`,
     )
 
+    await persistLinkedInSessionFromPage(page, session.username)
+
     onProgress({ type: 'progress', platform: 'linkedin', progress: 100 })
     return limitScrapedJobs(normalized)
 
   } catch (err) {
-    if (page) await saveScreenshot(page, 'linkedin-error.png')
     console.error('[linkedin] scrape error:', err)
-    onProgress({ type: 'error', platform: 'linkedin', error: err instanceof Error ? err.message : String(err) })
+    const msg = err instanceof Error ? err.message : String(err)
+    if (isLinkedInRedirectLoopError(msg)) {
+      clearSession('linkedin')
+      onProgress({
+        type: 'error',
+        platform: 'linkedin',
+        error:
+          'LinkedIn session entered redirect loop. Session cleared — paste a fresh li_at token in Settings and retry.',
+      })
+      return []
+    }
+    onProgress({ type: 'error', platform: 'linkedin', error: msg })
     return []
   } finally {
     if (page) await page.close().catch(() => undefined)

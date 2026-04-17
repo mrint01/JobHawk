@@ -55,9 +55,9 @@ router.post('/', async (req: Request, res: Response) => {
   const allJobs: ScrapedJob[] = []
 
   try {
-    const tasks = platforms.map(async (platform) => {
+    for (const platform of platforms) {
       const fn = scrapers[platform]
-      if (!fn) return
+      if (!fn) continue
 
       try {
         const jobs = await fn(jobTitle.trim(), location.trim(), (evt) => events.push(evt))
@@ -69,9 +69,7 @@ router.post('/', async (req: Request, res: Response) => {
           error: err instanceof Error ? err.message : String(err),
         })
       }
-    })
-
-    await Promise.all(tasks)
+    }
 
     // Sort newest first
     allJobs.sort((a, b) => new Date(b.postedDate).getTime() - new Date(a.postedDate).getTime())
@@ -110,31 +108,31 @@ router.get('/stream', (req: Request, res: Response) => {
   const scrapers = buildScrapers(platforms)
   const allJobs: ScrapedJob[] = []
 
-  const tasks = platforms.map(async (platform) => {
-    const fn = scrapers[platform]
-    if (!fn) return
+  ;(async () => {
+    for (const platform of platforms) {
+      const fn = scrapers[platform]
+      if (!fn) continue
 
-    try {
-      const jobs = await fn(
-        jobTitle!.trim(),
-        location.trim(),
-        (evt) => {
-          send(evt)
-          if (evt.type === 'jobs') allJobs.push(...(evt.jobs ?? []))
-        },
-      )
-      allJobs.push(...jobs)
-      send({ type: 'jobs', platform, jobs, progress: 100 })
-    } catch (err) {
-      send({
-        type: 'error',
-        platform,
-        error: err instanceof Error ? err.message : String(err),
-      })
+      try {
+        const jobs = await fn(
+          jobTitle!.trim(),
+          location.trim(),
+          (evt) => {
+            send(evt)
+            if (evt.type === 'jobs') allJobs.push(...(evt.jobs ?? []))
+          },
+        )
+        allJobs.push(...jobs)
+        send({ type: 'jobs', platform, jobs, progress: 100 })
+      } catch (err) {
+        send({
+          type: 'error',
+          platform,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
     }
-  })
-
-  Promise.all(tasks)
+  })()
     .then(() => {
       // Persist to server-side JSON store, then send final result
       const saved = mergeJobs(allJobs)

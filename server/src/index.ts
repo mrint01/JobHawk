@@ -30,6 +30,8 @@ app.use(express.urlencoded({ extended: true }))
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
+app.get('/api/ping', (_req, res) => { res.json({ pong: true, v: 2 }) })
+
 // Health check — includes which platforms have active sessions
 app.get('/api/health', (_req, res) => {
   res.json({

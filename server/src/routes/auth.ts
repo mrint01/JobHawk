@@ -42,9 +42,6 @@ function parseCredentials(body: ConnectBody): { email: string; password: string 
   return { email, password }
 }
 
-function isLinkedInFeedUrl(url: string): boolean {
-  return url.toLowerCase().includes('/feed')
-}
 
 async function typeIntoFirstAvailableSelector(
   page: Page,
@@ -673,15 +670,7 @@ async function connectLinkedInHeadless(email: string, password: string): Promise
     ])
 
     await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => undefined)
-
-    const afterLoginUrl = page.url()
-    if (!isLinkedInFeedUrl(afterLoginUrl)) {
-      return {
-        ok: false,
-        error: 'Sign-in did not open your LinkedIn feed (URL must include /feed). Paste your li_at token below instead.',
-        requiresLinkedInCookie: true,
-      }
-    }
+    await sleep(10_000)
 
     const cookies = await page.cookies('https://www.linkedin.com') as unknown as Protocol.Network.CookieParam[]
     if (!cookies.some((c) => c.name === 'li_at' && c.value.length > 0)) {

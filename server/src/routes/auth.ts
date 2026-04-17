@@ -628,6 +628,42 @@ async function connectXingHeadless(email: string, password: string): Promise<{ o
   }
 }
 
+async function screenshotStep(page: Page, label: string): Promise<void> {
+  try {
+    await import('fs')
+    const { tmpdir } = await import('os')
+    const { join } = await import('path')
+    const dir = tmpdir()
+    const ts = Date.now()
+    const file = join(dir, `linkedin-${label}-${ts}.png`)
+    await page.screenshot({ path: file, fullPage: true })
+    console.log(`[auth/linkedin] screenshot saved → ${file}`)
+  } catch (e) {
+    console.log(`[auth/linkedin] screenshot failed (${label}): ${e instanceof Error ? e.message : e}`)
+  }
+}
+
+async function logPageState(page: Page, label: string): Promise<void> {
+  try {
+    const url = page.url()
+    const title = await page.title().catch(() => '(no title)')
+    const bodyText = await page.evaluate(() =>
+      (document.body?.innerText ?? '').slice(0, 1500).replace(/\s+/g, ' ').trim()
+    ).catch(() => '(eval failed)')
+    const allCookies = await page.cookies().catch(() => [])
+    const cookieNames = allCookies.map((c) => c.name).join(', ') || '(none)'
+
+    console.log(`[auth/linkedin][${label}] ────────────────────────`)
+    console.log(`[auth/linkedin][${label}] URL:     ${url}`)
+    console.log(`[auth/linkedin][${label}] title:   ${title}`)
+    console.log(`[auth/linkedin][${label}] cookies: ${cookieNames}`)
+    console.log(`[auth/linkedin][${label}] body:    ${bodyText}`)
+    console.log(`[auth/linkedin][${label}] ────────────────────────`)
+  } catch (e) {
+    console.log(`[auth/linkedin][${label}] logPageState failed: ${e instanceof Error ? e.message : e}`)
+  }
+}
+
 async function connectLinkedInHeadless(email: string, password: string): Promise<{
   ok: boolean
   error?: string
@@ -635,13 +671,18 @@ async function connectLinkedInHeadless(email: string, password: string): Promise
 }> {
   let page: Page | null = null
   try {
+    console.log('[auth/linkedin] starting headless login flow…')
     page = await getBrowserPage(false, { showMouseOverlay: false, reuseBlankPage: true })
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9,fr-FR,fr;q=0.8' })
+
+    console.log('[auth/linkedin] navigating to login page…')
     await page.goto('https://www.linkedin.com/login', {
       waitUntil: 'domcontentloaded',
       timeout: 35_000,
     })
     await sleep(800)
+    await logPageState(page, '1-login-page')
+    await screenshotStep(page, '1-login-page')
 
     const filledEmail = await typeIntoFirstAvailableSelector(page, [
       '#username',
@@ -653,10 +694,15 @@ async function connectLinkedInHeadless(email: string, password: string): Promise
       'input[name="session_password"]',
       'input[type="password"]',
     ], password)
+
+    console.log(`[auth/linkedin] fields filled — email:${filledEmail} password:${filledPassword}`)
+
     if (!filledEmail || !filledPassword) {
+      await screenshotStep(page, '2-fields-not-found')
       return { ok: false, error: 'Could not find LinkedIn login fields. Please try again.' }
     }
 
+    console.log('[auth/linkedin] submitting login form…')
     await submitLoginForm(page, 'linkedin', [
       'button[type="submit"]',
       'button[data-id="sign-in-form__submit-btn"]',
@@ -669,11 +715,32 @@ async function connectLinkedInHeadless(email: string, password: string): Promise
       'log in',
     ])
 
-    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => undefined)
+    console.log('[auth/linkedin] waiting for post-login navigation…')
+    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => {
+      console.log('[auth/linkedin] waitForNavigation timed out — continuing anyway')
+    })
+
+    await logPageState(page, '3-after-submit')
+    await screenshotStep(page, '3-after-submit')
+
+    console.log('[auth/linkedin] waiting 10 s for session cookies to settle…')
     await sleep(10_000)
 
+    await logPageState(page, '4-after-wait')
+    await screenshotStep(page, '4-after-wait')
+
     const cookies = await page.cookies('https://www.linkedin.com') as unknown as Protocol.Network.CookieParam[]
-    if (!cookies.some((c) => c.name === 'li_at' && c.value.length > 0)) {
+    const cookieNames = cookies.map((c) => c.name).join(', ') || '(none)'
+    console.log(`[auth/linkedin] cookies from linkedin.com: ${cookieNames}`)
+
+    const hasLiAt = cookies.some((c) => c.name === 'li_at' && c.value.length > 0)
+    if (!hasLiAt) {
+      // Also try getting ALL page cookies (no domain filter) in case li_at landed elsewhere
+      const allCookies = await page.cookies().catch(() => []) as unknown as Protocol.Network.CookieParam[]
+      const allNames = allCookies.map((c) => `${c.name}@${c.domain}`).join(', ') || '(none)'
+      console.log(`[auth/linkedin] ALL cookies (no domain filter): ${allNames}`)
+
+      await screenshotStep(page, '5-no-li-at')
       return {
         ok: false,
         error: 'LinkedIn did not return a session cookie. Paste your li_at token below instead.',
@@ -681,9 +748,15 @@ async function connectLinkedInHeadless(email: string, password: string): Promise
       }
     }
 
+    console.log('[auth/linkedin] li_at cookie found — session established ✓')
     saveSession('linkedin', { cookies, loggedInAt: new Date(), username: email })
     return { ok: true }
   } catch (err) {
+    console.error('[auth/linkedin] headless login error:', err)
+    if (page) {
+      await logPageState(page, 'error').catch(() => undefined)
+      await screenshotStep(page, 'error').catch(() => undefined)
+    }
     return { ok: false, error: err instanceof Error ? err.message : 'LinkedIn login failed' }
   } finally {
     if (page) await page.close().catch(() => undefined)

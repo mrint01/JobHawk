@@ -1,6 +1,8 @@
 import 'dotenv/config'
 import express from 'express'
 import cors from 'cors'
+import fs from 'fs'
+import path from 'path'
 import scrapeRouter from './routes/scrape'
 import authRouter, { AUTH_MODE } from './routes/auth'
 import jobsRouter from './routes/jobs'
@@ -41,6 +43,32 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRouter)
 app.use('/api/scrape', scrapeRouter)
 app.use('/api/jobs', jobsRouter)
+
+// ── Debug: view latest Puppeteer screenshot ───────────────────────────────────
+// Temporary endpoint — remove once debugging is done.
+// Lists all /tmp/*.png files or serves the latest one.
+app.get('/api/debug/screenshots', (_req, res) => {
+  try {
+    const files = fs.readdirSync('/tmp')
+      .filter((f) => f.endsWith('.png'))
+      .map((f) => ({ name: f, mtime: fs.statSync(path.join('/tmp', f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)
+    res.json({ files: files.map((f) => `/api/debug/screenshot/${f.name}`) })
+  } catch {
+    res.json({ files: [] })
+  }
+})
+
+app.get('/api/debug/screenshot/:filename', (req, res) => {
+  const filename = path.basename(req.params.filename)
+  const filepath = path.join('/tmp', filename)
+  if (!fs.existsSync(filepath)) {
+    res.status(404).json({ error: 'File not found' })
+    return
+  }
+  res.setHeader('Content-Type', 'image/png')
+  res.sendFile(filepath)
+})
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {

@@ -1,6 +1,6 @@
 import type { AppState } from '../types'
 
-const STATE_KEY = 'jobradar_state'
+const STATE_KEY = 'jobhawk_state'
 
 const DEFAULT_STATE: AppState = {
   isLoggedIn: false,

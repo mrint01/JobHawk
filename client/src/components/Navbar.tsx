@@ -22,7 +22,7 @@ export default function Navbar() {
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center">
             <Briefcase className="w-3.5 h-3.5 text-white" />
           </div>
-          <span className="font-bold text-gray-900 dark:text-white text-sm">JobRadar</span>
+          <span className="font-bold text-gray-900 dark:text-white text-sm">JobHawk</span>
         </div>
 
         {/* Spacer */}

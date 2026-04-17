@@ -701,16 +701,64 @@ async function connectLinkedInHeadless(email: string, password: string): Promise
 }
 
 /**
- * Manual login saves a full cookie jar. Token-only used to store just `li_at`, which causes
- * redirect loops on scrape. Bootstrap: inject li_at, navigate once so LinkedIn sets companion
- * cookies, then persist the sanitized full jar (same effective shape as manual connect).
+ * Validate li_at via a plain HTTP request — no browser, no Puppeteer, no bot detection.
+ *
+ * The old approach opened a headless Chromium window to "warm up" cookies. LinkedIn's
+ * anti-automation systems detected the headless CDP session and immediately revoked the
+ * li_at server-side, which also logged the user out of their real browser. A plain
+ * HTTP fetch is indistinguishable from a normal browser page request and does NOT
+ * trigger that revocation.
  */
 async function bootstrapLinkedInSessionFromToken(cleanToken: string): Promise<{ ok: boolean; error?: string }> {
-  let page: Page | null = null
-  try {
-    page = await getBrowserPage(false)
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 15_000)
 
+  try {
+    console.log('[auth/linkedin] validating li_at token via HTTP (no browser)…')
+
+    const resp = await fetch('https://www.linkedin.com/feed/', {
+      method: 'GET',
+      headers: {
+        cookie: `li_at=${cleanToken}`,
+        'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36',
+        accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'accept-language': 'en-US,en;q=0.9',
+        'cache-control': 'no-cache',
+      },
+      redirect: 'manual',
+      signal: controller.signal,
+    })
+
+    clearTimeout(timer)
+
+    if (resp.status === 429) {
+      return { ok: false, error: 'LinkedIn rate limit hit during validation. Wait a few minutes and try again.' }
+    }
+
+    if (resp.status === 302 || resp.status === 301) {
+      const location = resp.headers.get('location') ?? ''
+      const isRejected =
+        location.includes('/login') ||
+        location.includes('/authwall') ||
+        location.includes('/checkpoint') ||
+        location.includes('/challenge') ||
+        location.includes('/uas/')
+
+      if (isRejected) {
+        return {
+          ok: false,
+          error:
+            'Token is invalid or already expired. In your browser: open linkedin.com → F12 → Application → Cookies → copy the li_at value and paste it here.',
+        }
+      }
+      // Redirect to /home/, /jobs/, etc. — session is valid
+    } else if (resp.status !== 200) {
+      return { ok: false, error: `LinkedIn returned HTTP ${resp.status}. Try a fresh li_at token.` }
+    }
+
+    // Token is valid — store it without ever opening a browser.
+    // The scraper (which uses puppeteer-extra-plugin-stealth) will use this cookie
+    // when scraping and will naturally accumulate companion cookies on first navigation.
     const liAtCookie: Protocol.Network.CookieParam = {
       name: 'li_at',
       value: cleanToken,
@@ -719,74 +767,33 @@ async function bootstrapLinkedInSessionFromToken(cleanToken: string): Promise<{ 
       secure: true,
       httpOnly: true,
     }
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    await page.setCookie(liAtCookie as any)
 
-    const attempts: Array<{ label: string; fn: () => Promise<unknown> }> = [
-      {
-        label: 'feed',
-        fn: () => page!.goto('https://www.linkedin.com/feed/', { waitUntil: 'domcontentloaded', timeout: 35_000 }),
-      },
-      {
-        label: 'home',
-        fn: () => page!.goto('https://www.linkedin.com/', { waitUntil: 'domcontentloaded', timeout: 35_000 }),
-      },
-      {
-        label: 'feed networkidle',
-        fn: () => page!.goto('https://www.linkedin.com/feed/', { waitUntil: 'networkidle2', timeout: 50_000 }),
-      },
-    ]
+    saveSession('linkedin', {
+      cookies: [liAtCookie],
+      loggedInAt: new Date(),
+      username: 'linkedin-token',
+    })
 
-    let navigated = false
-    for (const { label, fn } of attempts) {
-      try {
-        await fn()
-        navigated = true
-        if (label !== 'feed') {
-          console.log(`[auth/linkedin] token bootstrap navigation ok via: ${label}`)
-        }
-        break
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e)
-        if (msg.includes('ERR_TOO_MANY_REDIRECTS') || msg.includes('too many redirects')) {
-          console.warn(`[auth/linkedin] token bootstrap: ${label} redirect loop, trying next`)
-          continue
-        }
-        return { ok: false, error: msg }
-      }
-    }
-
-    if (!navigated) {
-      return {
-        ok: false,
-        error:
-          'LinkedIn could not load with this li_at (redirect loop). Paste a fresh token from an active browser session, or use manual connect.',
-      }
-    }
-
-    await sleep(800)
-
-    const u = page.url().toLowerCase()
-    if (u.includes('/login') || u.includes('/checkpoint') || u.includes('/challenge')) {
-      return {
-        ok: false,
-        error: 'Token was rejected or LinkedIn requires a security check. Use manual connect or a new li_at.',
-      }
-    }
-
-    const cookies = await page.cookies('https://www.linkedin.com', 'https://linkedin.com')
-    const sanitized = sanitizeLinkedInCookiesForReplay(cookies as Protocol.Network.CookieParam[])
-    if (!sanitized.some((c) => c.name === 'li_at' && c.value.length > 0)) {
-      return { ok: false, error: 'Could not establish a LinkedIn session from this token.' }
-    }
-
-    saveSession('linkedin', { cookies: sanitized, loggedInAt: new Date(), username: 'linkedin-cookie-token' })
-    console.log(`[auth/linkedin] token bootstrap persisted ${sanitized.length} cookies`)
+    console.log('[auth/linkedin] token validated via HTTP and stored (no browser opened → token stays alive)')
     return { ok: true }
   } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'LinkedIn token connect failed' }
-  } finally {
-    if (page) await page.close().catch(() => undefined)
+    clearTimeout(timer)
+    const msg = err instanceof Error ? err.message : String(err)
+    if (msg.includes('abort') || msg.includes('The operation was aborted')) {
+      // Network timeout — store optimistically and let the first scrape confirm
+      console.warn('[auth/linkedin] validation request timed out — storing token optimistically')
+      const liAtCookie: Protocol.Network.CookieParam = {
+        name: 'li_at',
+        value: cleanToken,
+        domain: '.linkedin.com',
+        path: '/',
+        secure: true,
+        httpOnly: true,
+      }
+      saveSession('linkedin', { cookies: [liAtCookie], loggedInAt: new Date(), username: 'linkedin-token' })
+      return { ok: true }
+    }
+    return { ok: false, error: `Could not reach LinkedIn to validate token: ${msg}` }
   }
 }
 

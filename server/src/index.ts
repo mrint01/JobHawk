@@ -44,7 +44,7 @@ app.use('/api/jobs', jobsRouter)
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {
-  console.log(`✅  JobRadar API  →  http://localhost:${PORT}`)
+  console.log(`✅  JobHawk API  →  http://localhost:${PORT}`)
   console.log(`   Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`)
 })
 

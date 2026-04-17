@@ -50,6 +50,8 @@ export async function getBrowserPage(
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',          // Required in containers — prevents Chrome from crashing when /dev/shm is limited
+          '--disable-gpu',                     // Headless containers have no GPU
           '--disable-blink-features=AutomationControlled',
           '--disable-infobars',
           '--window-size=1280,800',
@@ -143,6 +145,8 @@ export async function getAuthBrowserPage(
       args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
         '--disable-blink-features=AutomationControlled',
         '--disable-infobars',
         '--window-size=1280,800',

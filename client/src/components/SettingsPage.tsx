@@ -53,7 +53,7 @@ function AppearanceSection() {
   const { theme, setTheme } = useApp()
 
   return (
-    <Section title="Appearance" description="Choose how JobRadar looks for you.">
+    <Section title="Appearance" description="Choose how JobHawk looks for you.">
       <div className="grid sm:grid-cols-2 gap-3">
         {/* Light */}
         <button
@@ -416,7 +416,7 @@ function PlatformCard({ platform }: { platform: Platform }) {
         </p>
       )}
 
-      {!connected && !isConnecting && authMode === 'headless' && formOpen && (
+      {!connected && authMode === 'headless' && formOpen && (
         <div className="mt-4 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-900/40 p-3.5 space-y-3">
           {platform === 'linkedin' && linkedinCookieFallback ? (
             <>
@@ -507,12 +507,15 @@ function PlatformCard({ platform }: { platform: Platform }) {
             <button
               type="button"
               onClick={handleLoginSubmit}
-              disabled={!serverOnline}
+              disabled={!serverOnline || isConnecting}
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
               style={{ backgroundColor: meta.color }}
             >
-              <KeyRound className="w-3.5 h-3.5" />
-              {platform === 'linkedin' && linkedinCookieFallback ? 'Save Token' : 'Login'}
+              {isConnecting
+                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                : <KeyRound className="w-3.5 h-3.5" />
+              }
+              {isConnecting ? 'Connecting…' : platform === 'linkedin' && linkedinCookieFallback ? 'Save Token' : 'Login'}
             </button>
           </div>
         </div>

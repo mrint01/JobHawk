@@ -10,12 +10,19 @@
  * - LinkedIn tries { email, password }; if the post-login URL is not /feed,
  *   responds with requiresLinkedInCookie=true so the UI can ask for li_at token.
  */
+import fs from 'fs'
+import path from 'path'
 import { Router, type Request, type Response } from 'express'
 import type { Page, Protocol } from 'puppeteer'
 import { getAuthBrowserPage, getBrowserPage, sleep } from '../utils/browser'
-import { parseLiAtTokenInput } from '../utils/linkedinCookies'
 import { saveSession, clearSession, allSessions } from '../utils/sessions'
 import { validateLinkedInToken } from '../utils/linkedinApi'
+import {
+  readLinkedInSessionFile,
+  writeLinkedInSessionFile,
+  deleteLinkedInSessionFile,
+  isLinkedInSessionExpired,
+} from '../utils/linkedinSession'
 
 const router = Router()
 const MANUAL_LOGIN_WAIT_MS = 10 * 60 * 1000
@@ -628,171 +635,6 @@ async function connectXingHeadless(email: string, password: string): Promise<{ o
   }
 }
 
-async function screenshotStep(page: Page, label: string): Promise<void> {
-  try {
-    await import('fs')
-    const { tmpdir } = await import('os')
-    const { join } = await import('path')
-    const dir = tmpdir()
-    const ts = Date.now()
-    const file = join(dir, `linkedin-${label}-${ts}.png`)
-    await page.screenshot({ path: file, fullPage: true })
-    console.log(`[auth/linkedin] screenshot saved → ${file}`)
-  } catch (e) {
-    console.log(`[auth/linkedin] screenshot failed (${label}): ${e instanceof Error ? e.message : e}`)
-  }
-}
-
-async function logPageState(page: Page, label: string): Promise<void> {
-  try {
-    const url = page.url()
-    const title = await page.title().catch(() => '(no title)')
-    const bodyText = await page.evaluate(() =>
-      (document.body?.innerText ?? '').slice(0, 1500).replace(/\s+/g, ' ').trim()
-    ).catch(() => '(eval failed)')
-    const allCookies = await page.cookies().catch(() => [])
-    const cookieNames = allCookies.map((c) => c.name).join(', ') || '(none)'
-
-    console.log(`[auth/linkedin][${label}] ────────────────────────`)
-    console.log(`[auth/linkedin][${label}] URL:     ${url}`)
-    console.log(`[auth/linkedin][${label}] title:   ${title}`)
-    console.log(`[auth/linkedin][${label}] cookies: ${cookieNames}`)
-    console.log(`[auth/linkedin][${label}] body:    ${bodyText}`)
-    console.log(`[auth/linkedin][${label}] ────────────────────────`)
-  } catch (e) {
-    console.log(`[auth/linkedin][${label}] logPageState failed: ${e instanceof Error ? e.message : e}`)
-  }
-}
-
-async function connectLinkedInHeadless(email: string, password: string): Promise<{
-  ok: boolean
-  error?: string
-  requiresLinkedInCookie?: boolean
-}> {
-  let page: Page | null = null
-  try {
-    console.log('[auth/linkedin] starting headless login flow…')
-    page = await getBrowserPage(false, { showMouseOverlay: false, reuseBlankPage: true })
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9,fr-FR,fr;q=0.8' })
-
-    console.log('[auth/linkedin] navigating to login page…')
-    await page.goto('https://www.linkedin.com/login', {
-      waitUntil: 'domcontentloaded',
-      timeout: 35_000,
-    })
-    await sleep(800)
-    await logPageState(page, '1-login-page')
-    await screenshotStep(page, '1-login-page')
-
-    const filledEmail = await typeIntoFirstAvailableSelector(page, [
-      '#username',
-      'input[name="session_key"]',
-      'input[type="email"]',
-    ], email)
-    const filledPassword = await typeIntoFirstAvailableSelector(page, [
-      '#password',
-      'input[name="session_password"]',
-      'input[type="password"]',
-    ], password)
-
-    console.log(`[auth/linkedin] fields filled — email:${filledEmail} password:${filledPassword}`)
-
-    if (!filledEmail || !filledPassword) {
-      await screenshotStep(page, '2-fields-not-found')
-      return { ok: false, error: 'Could not find LinkedIn login fields. Please try again.' }
-    }
-
-    console.log('[auth/linkedin] submitting login form…')
-    await submitLoginForm(page, 'linkedin', [
-      'button[type="submit"]',
-      'button[data-id="sign-in-form__submit-btn"]',
-      'button[id*="sign-in"]',
-      'button[class*="sign-in"]',
-      'input[type="submit"]',
-    ], [
-      'sign in',
-      'login',
-      'log in',
-    ])
-
-    console.log('[auth/linkedin] waiting for post-login navigation…')
-    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => {
-      console.log('[auth/linkedin] waitForNavigation timed out — continuing anyway')
-    })
-
-    await logPageState(page, '3-after-submit')
-    await screenshotStep(page, '3-after-submit')
-
-    console.log('[auth/linkedin] waiting 10 s for session cookies to settle…')
-    await sleep(10_000)
-
-    await logPageState(page, '4-after-wait')
-    await screenshotStep(page, '4-after-wait')
-
-    const cookies = await page.cookies('https://www.linkedin.com') as unknown as Protocol.Network.CookieParam[]
-    const cookieNames = cookies.map((c) => c.name).join(', ') || '(none)'
-    console.log(`[auth/linkedin] cookies from linkedin.com: ${cookieNames}`)
-
-    const hasLiAt = cookies.some((c) => c.name === 'li_at' && c.value.length > 0)
-    if (!hasLiAt) {
-      // Also try getting ALL page cookies (no domain filter) in case li_at landed elsewhere
-      const allCookies = await page.cookies().catch(() => []) as unknown as Protocol.Network.CookieParam[]
-      const allNames = allCookies.map((c) => `${c.name}@${c.domain}`).join(', ') || '(none)'
-      console.log(`[auth/linkedin] ALL cookies (no domain filter): ${allNames}`)
-
-      await screenshotStep(page, '5-no-li-at')
-      return {
-        ok: false,
-        error: 'LinkedIn did not return a session cookie. Paste your li_at token below instead.',
-        requiresLinkedInCookie: true,
-      }
-    }
-
-    console.log('[auth/linkedin] li_at cookie found — session established ✓')
-    saveSession('linkedin', { cookies, loggedInAt: new Date(), username: email })
-    return { ok: true }
-  } catch (err) {
-    console.error('[auth/linkedin] headless login error:', err)
-    if (page) {
-      await logPageState(page, 'error').catch(() => undefined)
-      await screenshotStep(page, 'error').catch(() => undefined)
-    }
-    return { ok: false, error: err instanceof Error ? err.message : 'LinkedIn login failed' }
-  } finally {
-    if (page) await page.close().catch(() => undefined)
-  }
-}
-
-/**
- * Validate li_at via LinkedIn's Voyager API (/me endpoint) — no browser, no CDP.
- * Returns HTTP 200 for valid tokens, 401/403 for invalid/expired ones.
- * Stores the token only when validation confirms it is live.
- */
-async function bootstrapLinkedInSessionFromToken(cleanToken: string): Promise<{ ok: boolean; error?: string }> {
-  console.log('[auth/linkedin] validating li_at token via Voyager API…')
-
-  const validation = await validateLinkedInToken(cleanToken)
-  if (!validation.ok) return validation
-
-  const liAtCookie: Protocol.Network.CookieParam = {
-    name: 'li_at',
-    value: cleanToken,
-    domain: '.linkedin.com',
-    path: '/',
-    secure: true,
-    httpOnly: true,
-  }
-
-  saveSession('linkedin', {
-    cookies: [liAtCookie],
-    loggedInAt: new Date(),
-    username: 'linkedin-token',
-  })
-
-  console.log('[auth/linkedin] token validated and stored (no browser opened)')
-  return { ok: true }
-}
-
 // Status - which platforms have an active session
 router.get('/status', (_req: Request, res: Response) => {
   res.json(allSessions())
@@ -804,8 +646,49 @@ router.post('/:platform/disconnect', (req: Request, res: Response) => {
   res.json({ ok: true })
 })
 
+// Download Python capture script
+router.get('/linkedin/capture-script', (_req: Request, res: Response) => {
+  const scriptPath = path.join(__dirname, '..', '..', 'scripts', 'linkedin_capture.py')
+  if (!fs.existsSync(scriptPath)) {
+    res.status(404).json({ error: 'Script not found' })
+    return
+  }
+  const content = fs.readFileSync(scriptPath)
+  res.setHeader('Content-Type', 'text/x-python')
+  res.setHeader('Content-Disposition', 'attachment; filename="linkedin_capture.py"')
+  res.setHeader('Content-Length', content.length)
+  res.end(content)
+})
+
+// Import session — called by the local capture script
+router.post('/linkedin/import-session', async (req: Request, res: Response) => {
+  const { liAt, username } = req.body as { liAt?: unknown; username?: unknown }
+
+  const token    = typeof liAt === 'string' ? liAt.trim() : ''
+  const uname    = typeof username === 'string' ? username.trim() : 'linkedin-user'
+
+  if (!token) {
+    res.json({ ok: false, error: 'liAt token is required.' })
+    return
+  }
+
+  writeLinkedInSessionFile({ liAt: token, capturedAt: new Date().toISOString(), username: uname })
+
+  // Pre-load into memory immediately
+  saveSession('linkedin', {
+    cookies: [{ name: 'li_at', value: token, domain: '.linkedin.com', path: '/', secure: true, httpOnly: true }],
+    loggedInAt: new Date(),
+    username: uname,
+  })
+
+  console.log(`[auth/linkedin] session imported via capture script (user: ${uname})`)
+  res.json({ ok: true })
+})
+
 // Connect - LinkedIn
-router.post('/linkedin/connect', async (req: Request<unknown, unknown, ConnectBody>, res: Response) => {
+// In headless mode: reads data/linkedin-session.json, validates token, loads into memory.
+// In manual mode: opens a visible browser window for manual login.
+router.post('/linkedin/connect', async (_req: Request, res: Response) => {
   if (activeConnectLocks.has('linkedin')) {
     res.json({ ok: false, error: 'LinkedIn connection is already in progress. Please wait.' })
     return
@@ -813,15 +696,16 @@ router.post('/linkedin/connect', async (req: Request<unknown, unknown, ConnectBo
   activeConnectLocks.add('linkedin')
 
   try {
+    // ── Manual mode (dev only) ─────────────────────────────────────────────────
     if (AUTH_MODE === 'manual') {
       const result = await runManualConnect(
         'linkedin',
         async (page) => {
           await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
-          await page.goto('https://www.linkedin.com/login?fromSignIn=true&trk=guest_homepage-basic_nav-header-signin', {
-            waitUntil: 'domcontentloaded',
-            timeout: 30_000,
-          })
+          await page.goto(
+            'https://www.linkedin.com/login?fromSignIn=true&trk=guest_homepage-basic_nav-header-signin',
+            { waitUntil: 'domcontentloaded', timeout: 30_000 },
+          )
           await page.bringToFront().catch(() => undefined)
         },
         {
@@ -835,26 +719,49 @@ router.post('/linkedin/connect', async (req: Request<unknown, unknown, ConnectBo
       return
     }
 
-    const token = asString(req.body.token)
-    if (token) {
-      const clean = parseLiAtTokenInput(token)
-      if (!clean) {
-        res.json({ ok: false, error: 'LinkedIn token is required.' })
-        return
-      }
-      const tokenResult = await bootstrapLinkedInSessionFromToken(clean)
-      res.json(tokenResult.ok ? { ok: true, username: 'linkedin-cookie-token' } : tokenResult)
+    // ── Headless mode: read session file ───────────────────────────────────────
+    const fileSession = readLinkedInSessionFile()
+
+    if (!fileSession) {
+      res.json({
+        ok: false,
+        noSession: true,
+        error: 'No LinkedIn session found. Run the capture script locally first.',
+      })
       return
     }
 
-    const creds = parseCredentials(req.body)
-    if (!creds) {
-      res.json({ ok: false, error: 'Email and password are required.' })
+    if (isLinkedInSessionExpired(fileSession)) {
+      res.json({
+        ok: false,
+        expired: true,
+        error: 'LinkedIn session has expired (>330 days). Run the capture script again.',
+      })
       return
     }
 
-    const result = await connectLinkedInHeadless(creds.email, creds.password)
-    res.json(result.ok ? { ok: true, username: creds.email } : result)
+    // Validate the token is still accepted by LinkedIn
+    const validation = await validateLinkedInToken(fileSession.liAt)
+    if (!validation.ok) {
+      // Token was rejected — delete the stale file so next connect attempt is clean
+      deleteLinkedInSessionFile()
+      res.json({
+        ok: false,
+        expired: true,
+        error: validation.error ?? 'LinkedIn token was rejected. Run the capture script again.',
+      })
+      return
+    }
+
+    // Load into memory
+    saveSession('linkedin', {
+      cookies: [{ name: 'li_at', value: fileSession.liAt, domain: '.linkedin.com', path: '/', secure: true, httpOnly: true }],
+      loggedInAt: new Date(fileSession.capturedAt),
+      username: fileSession.username,
+    })
+
+    console.log(`[auth/linkedin] session loaded from file (user: ${fileSession.username})`)
+    res.json({ ok: true, username: fileSession.username })
   } finally {
     activeConnectLocks.delete('linkedin')
   }

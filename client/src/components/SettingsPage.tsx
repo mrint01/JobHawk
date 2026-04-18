@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
   Sun, Moon, KeyRound, AlertCircle, CheckCircle,
-  Check, Unlink, Wifi, Loader2, Eye, EyeOff, WifiOff,
+  Check, Unlink, Wifi, Loader2, Eye, EyeOff, WifiOff, Download,
 } from 'lucide-react'
 import type { Platform } from '../types'
 import { useApp } from '../context/AppContext'
+import { BASE } from '../services/api'
 
 // ── Server offline banner ─────────────────────────────────────────────────────
 function ServerBanner() {
@@ -279,16 +280,17 @@ function PlatformCard({ platform }: { platform: Platform }) {
 
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [token, setToken] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [inlineError, setInlineError] = useState('')
-  const [linkedinCookieFallback, setLinkedinCookieFallback] = useState(false)
   const [formOpen, setFormOpen] = useState(false)
+  // LinkedIn-specific states
+  const [linkedinNoSession, setLinkedinNoSession] = useState(false)
+  const [linkedinExpired, setLinkedinExpired] = useState(false)
 
   useEffect(() => {
     setInlineError('')
-    setLinkedinCookieFallback(false)
-    setToken('')
+    setLinkedinNoSession(false)
+    setLinkedinExpired(false)
     setPassword('')
     setFormOpen(false)
   }, [platform, authMode, connected])
@@ -298,48 +300,35 @@ function PlatformCard({ platform }: { platform: Platform }) {
       await connectPlatform(platform)
       return
     }
+    // LinkedIn in headless mode: no form — just check the session file
+    if (platform === 'linkedin') {
+      setInlineError('')
+      setLinkedinNoSession(false)
+      setLinkedinExpired(false)
+      const result = await connectPlatform(platform)
+      if (!result.ok) {
+        if (result.noSession)  setLinkedinNoSession(true)
+        else if (result.expired) setLinkedinExpired(true)
+        else setInlineError(result.error ?? 'Connection failed.')
+      }
+      return
+    }
+    // StepStone / Xing: toggle credential form
     setFormOpen((v) => !v)
   }
 
   async function handleLoginSubmit() {
     setInlineError('')
-
-    if (authMode !== 'headless') {
-      return
-    }
-
-    if (platform === 'linkedin' && linkedinCookieFallback) {
-      if (!token.trim()) {
-        setInlineError('Please paste your LinkedIn li_at token.')
-        return
-      }
-      const result = await connectPlatform(platform, { token: token.trim() })
-      if (!result.ok) {
-        setInlineError(result.error ?? 'LinkedIn token connection failed.')
-      } else {
-        setFormOpen(false)
-      }
-      return
-    }
-
+    if (authMode !== 'headless') return
     if (!email.trim() || !password.trim()) {
       setInlineError('Email and password are required.')
       return
     }
-
     const result = await connectPlatform(platform, { email: email.trim(), password })
     if (!result.ok) {
-      if (platform === 'linkedin' && result.requiresLinkedInCookie) {
-        setLinkedinCookieFallback(true)
-        setFormOpen(true)
-        setInlineError(result.error ?? 'LinkedIn requested CAPTCHA/challenge. Use token fallback below.')
-      } else {
-        setInlineError(result.error ?? 'Connection failed.')
-      }
+      setInlineError(result.error ?? 'Connection failed.')
       return
     }
-
-    setInlineError('')
     setFormOpen(false)
   }
 
@@ -416,75 +405,85 @@ function PlatformCard({ platform }: { platform: Platform }) {
         </p>
       )}
 
-      {!connected && authMode === 'headless' && formOpen && (
-        <div className="mt-4 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-900/40 p-3.5 space-y-3">
-          {platform === 'linkedin' && linkedinCookieFallback ? (
-            <>
-              <div className="rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 p-3">
-                <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
-                  LinkedIn challenge detected. Use token fallback.
-                </p>
-                <p className="mt-1 text-xs text-blue-700 dark:text-blue-300/80">
-                  Open LinkedIn while logged in, press F12, then go to Application {'->'} Cookies {'->'} https://www.linkedin.com and copy the <code className="font-mono">li_at</code> value.
-                </p>
+      {/* LinkedIn headless mode: show session status messages, no form */}
+      {!connected && !isConnecting && platform === 'linkedin' && authMode === 'headless' && (linkedinNoSession || linkedinExpired || inlineError) && (
+        <div className="mt-3 space-y-2">
+          {(linkedinNoSession || linkedinExpired) && (
+            <div className="rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 p-3 space-y-2">
+              <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
+                {linkedinExpired ? 'Session expired — run the capture script again' : 'No LinkedIn session found'}
+              </p>
+              <p className="text-xs text-blue-700 dark:text-blue-400/90">
+                Download and run this script on your local machine. It opens Chrome, you log in to LinkedIn manually, and the session is sent to the server.
+              </p>
+              <div className="space-y-1">
+                <p className="text-xs text-blue-600 dark:text-blue-400/80 font-medium">1. Install dependency (once):</p>
+                <code className="block text-xs bg-blue-100 dark:bg-blue-500/20 text-blue-900 dark:text-blue-200 rounded-lg px-3 py-1.5 font-mono">
+                  pip install selenium
+                </code>
               </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
-                  LinkedIn li_at token
-                </label>
-                <input
-                  type="text"
-                  className="input"
-                  placeholder="Paste li_at token"
-                  value={token}
-                  onChange={(e) => setToken(e.target.value)}
-                />
+              <div className="space-y-1">
+                <p className="text-xs text-blue-600 dark:text-blue-400/80 font-medium">2. Run the script:</p>
+                <code className="block text-xs bg-blue-100 dark:bg-blue-500/20 text-blue-900 dark:text-blue-200 rounded-lg px-3 py-1.5 font-mono">
+                  python3 linkedin_capture.py --url {'{YOUR_RAILWAY_URL}'}
+                </code>
               </div>
-            </>
-          ) : (
-            <>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
-                  Email
-                </label>
-                <input
-                  type="email"
-                  className="input"
-                  placeholder="you@example.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  autoComplete="username"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
-                  Password
-                </label>
-                <div className="relative">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    className="input pr-10"
-                    placeholder="Your password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    autoComplete="current-password"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((v) => !v)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
-                  >
-                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                  </button>
-                </div>
-              </div>
-              {platform === 'linkedin' && (
-                <p className="text-xs text-gray-500 dark:text-slate-400">
-                  If LinkedIn blocks automated login (CAPTCHA/challenge), we will switch you to secure token fallback.
-                </p>
-              )}
-            </>
+              <a
+                href={`${BASE}/api/auth/linkedin/capture-script`}
+                download="linkedin_capture.py"
+                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors duration-150 mt-1"
+              >
+                <Download className="w-3.5 h-3.5" />
+                Download linkedin_capture.py
+              </a>
+              <p className="text-xs text-blue-600 dark:text-blue-400/80">
+                After the script finishes, click Connect again.
+              </p>
+            </div>
           )}
+          {inlineError && (
+            <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-3 py-2">
+              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
+              {inlineError}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* StepStone / Xing credential form */}
+      {!connected && authMode === 'headless' && formOpen && platform !== 'linkedin' && (
+        <div className="mt-4 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-900/40 p-3.5 space-y-3">
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">Email</label>
+            <input
+              type="email"
+              className="input"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="username"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">Password</label>
+            <div className="relative">
+              <input
+                type={showPassword ? 'text' : 'password'}
+                className="input pr-10"
+                placeholder="Your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
+              >
+                {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+              </button>
+            </div>
+          </div>
 
           {inlineError && (
             <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-3 py-2">
@@ -496,10 +495,7 @@ function PlatformCard({ platform }: { platform: Platform }) {
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
               type="button"
-              onClick={() => {
-                setFormOpen(false)
-                setInlineError('')
-              }}
+              onClick={() => { setFormOpen(false); setInlineError('') }}
               className="btn-secondary text-xs px-3 py-1.5"
             >
               Cancel
@@ -511,11 +507,8 @@ function PlatformCard({ platform }: { platform: Platform }) {
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
               style={{ backgroundColor: meta.color }}
             >
-              {isConnecting
-                ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                : <KeyRound className="w-3.5 h-3.5" />
-              }
-              {isConnecting ? 'Connecting…' : platform === 'linkedin' && linkedinCookieFallback ? 'Save Token' : 'Login'}
+              {isConnecting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <KeyRound className="w-3.5 h-3.5" />}
+              {isConnecting ? 'Connecting…' : 'Login'}
             </button>
           </div>
         </div>

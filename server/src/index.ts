@@ -6,8 +6,9 @@ import path from 'path'
 import scrapeRouter from './routes/scrape'
 import authRouter, { AUTH_MODE } from './routes/auth'
 import jobsRouter from './routes/jobs'
-import { allSessions } from './utils/sessions'
+import { allSessions, saveSession } from './utils/sessions'
 import { closeBrowser } from './utils/browser'
+import { readLinkedInSessionFile, isLinkedInSessionExpired } from './utils/linkedinSession'
 
 const PORT = Number(process.env.PORT ?? 3001)
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173')
@@ -76,6 +77,19 @@ app.get('/api/debug/screenshot/:filename', (req, res) => {
     res.status(500).json({ error: String(err) })
   }
 })
+
+// ── Auto-load LinkedIn session from file on startup ───────────────────────────
+const linkedInFile = readLinkedInSessionFile()
+if (linkedInFile && !isLinkedInSessionExpired(linkedInFile)) {
+  saveSession('linkedin', {
+    cookies: [{ name: 'li_at', value: linkedInFile.liAt, domain: '.linkedin.com', path: '/', secure: true, httpOnly: true }],
+    loggedInAt: new Date(linkedInFile.capturedAt),
+    username: linkedInFile.username,
+  })
+  console.log(`✅  LinkedIn session pre-loaded (user: ${linkedInFile.username})`)
+} else if (linkedInFile) {
+  console.log('⚠️   LinkedIn session file found but expired — run the capture script again')
+}
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {

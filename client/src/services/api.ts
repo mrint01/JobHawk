@@ -5,7 +5,7 @@
  */
 import type { Job } from '../types'
 
-const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
+export const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
 
 export type PlatformId = 'linkedin' | 'stepstone' | 'xing'
 
@@ -14,6 +14,8 @@ export interface ConnectResult {
   username?: string
   error?: string
   requiresLinkedInCookie?: boolean
+  noSession?: boolean   // LinkedIn: no session file on server
+  expired?: boolean     // LinkedIn: session file exists but expired/rejected
 }
 
 export interface HealthResult {

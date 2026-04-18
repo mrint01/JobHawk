@@ -4,17 +4,23 @@ JobHawk — LinkedIn Session Capture Script
 
 Requirements:
     pip install selenium
+    Google Chrome (Chromium is fine) — Selenium Manager can fetch a matching ChromeDriver.
 
 Usage:
     python3 linkedin_capture.py
-    python3 linkedin_capture.py --url https://your-railway-app.up.railway.app
+    python3 linkedin_capture.py --url http://localhost:5173
+
+Only the li_at cookie is sent to the server. The API materializes the full session
+in Playwright Firefox on the server (independent of which browser you use here).
 """
 
+import argparse
+import json
 import sys
 import time
-import json
-import urllib.request
 import urllib.error
+import urllib.request
+from pathlib import Path
 
 
 def check_selenium():
@@ -28,39 +34,56 @@ def check_selenium():
         sys.exit(1)
 
 
-def main():
-    backend = "http://localhost:5173"
-    #"https://jobhawk-server-production.up.railway.app"
-    args = sys.argv[1:]
+def build_chrome_driver():
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
 
-    if "--url" in args:
-        idx = args.index("--url")
-        if idx + 1 < len(args):
-            backend = args[idx + 1].rstrip("/")
+    # Isolated profile — does not use your daily Chrome profile.
+    profile_dir = Path.home() / ".cache" / "jobhawk-linkedin-capture-chrome"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+
+    options = Options()
+    options.add_argument(f"--user-data-dir={profile_dir}")
+    options.add_argument("--window-size=1280,900")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+
+    try:
+        return webdriver.Chrome(options=options)
+    except Exception as e:
+        print(f"\n  Could not open Chrome: {e}")
+        print("  Install Google Chrome / Chromium and ensure ChromeDriver is available.")
+        sys.exit(1)
+
+
+def parse_args():
+    p = argparse.ArgumentParser(description="Capture LinkedIn li_at for JobHawk")
+    p.add_argument(
+        "--url",
+        default="http://localhost:5173",
+        help="JobHawk server base URL (default: http://localhost:5173)",
+    )
+    return p.parse_args()
+
+
+def main():
+    args = parse_args()
+    backend = args.url.rstrip("/")
 
     print("╔══════════════════════════════════════════════╗")
     print("║   JobHawk — LinkedIn Session Capture Tool   ║")
     print("╚══════════════════════════════════════════════╝")
     print(f"\n  Backend: {backend}")
+    print("  Browser: Chrome (isolated profile under ~/.cache/jobhawk-linkedin-capture-chrome)\n")
 
     check_selenium()
+    driver = build_chrome_driver()
 
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-
-    print("  Opening Chrome...\n")
-
-    options = Options()
-    options.add_argument("--window-size=1280,900")
+    print("  Opening LinkedIn login...\n")
 
     try:
-        driver = webdriver.Chrome(options=options)
-    except Exception as e:
-        print(f"\n  Could not open Chrome: {e}")
-        print("  Make sure Google Chrome is installed on your system.")
-        sys.exit(1)
-
-    try:
+        driver.set_window_size(1280, 900)
         driver.get("https://www.linkedin.com/login")
 
         print("  Please log in to LinkedIn in the browser window.")
@@ -109,7 +132,6 @@ def main():
 
         token = li_at_cookie["value"]
 
-        # Try to extract the display name from the page
         username = "linkedin-user"
         for selector in [
             ".feed-identity-module__member-name",
@@ -124,9 +146,9 @@ def main():
             except Exception:
                 pass
 
-        print(f"\n  Token   : {token[:24]}...")
+        print(f"\n  li_at   : {token[:24]}...")
         print(f"  Username: {username}")
-        print(f"\n  Sending to {backend}...")
+        print(f"\n  Sending li_at to {backend} (full cookie jar is not stored — see script header).")
 
         payload = json.dumps({"liAt": token, "username": username}).encode("utf-8")
         req = urllib.request.Request(

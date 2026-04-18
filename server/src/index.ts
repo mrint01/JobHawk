@@ -8,7 +8,14 @@ import authRouter, { AUTH_MODE } from './routes/auth'
 import jobsRouter from './routes/jobs'
 import { allSessions, saveSession, hasSession, clearSession } from './utils/sessions'
 import { closeBrowser } from './utils/browser'
-import { readLinkedInSessionFile, isLinkedInSessionExpired } from './utils/linkedinSession'
+import { closeLinkedInFirefoxBrowser } from './utils/linkedinFirefox'
+import { materializeLinkedInSessionFromLiAt } from './utils/linkedinBootstrap'
+import {
+  readLinkedInSessionFile,
+  isLinkedInSessionExpired,
+  sessionFileToPuppeteerCookies,
+  sessionNeedsPuppeteerMaterialization,
+} from './utils/linkedinSession'
 
 const PORT = Number(process.env.PORT ?? 3001)
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173')
@@ -78,19 +85,6 @@ app.get('/api/debug/screenshot/:filename', (req, res) => {
   }
 })
 
-// ── Auto-load LinkedIn session from file on startup ───────────────────────────
-const linkedInFile = readLinkedInSessionFile()
-if (linkedInFile && !isLinkedInSessionExpired(linkedInFile)) {
-  saveSession('linkedin', {
-    cookies: [{ name: 'li_at', value: linkedInFile.liAt, domain: '.linkedin.com', path: '/', secure: true, httpOnly: true }],
-    loggedInAt: new Date(linkedInFile.capturedAt),
-    username: linkedInFile.username,
-  })
-  console.log(`✅  LinkedIn session pre-loaded (user: ${linkedInFile.username})`)
-} else if (linkedInFile) {
-  console.log('⚠️   LinkedIn session file found but expired — run the capture script again')
-}
-
 // ── LinkedIn session watchdog (every 30 min) ──────────────────────────────────
 setInterval(() => {
   if (!hasSession('linkedin')) return
@@ -101,17 +95,63 @@ setInterval(() => {
   }
 }, 30 * 60 * 1000)
 
-// ── Start ─────────────────────────────────────────────────────────────────────
-const server = app.listen(PORT, () => {
-  console.log(`✅  JobHawk API  →  http://localhost:${PORT}`)
-  console.log(`   Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`)
-})
+async function preloadLinkedInSessionFromDisk(): Promise<void> {
+  const linkedInFile = readLinkedInSessionFile()
+  if (!linkedInFile) return
+  if (isLinkedInSessionExpired(linkedInFile)) {
+    console.log('⚠️   LinkedIn session file found but expired — run the capture script again')
+    return
+  }
 
-async function shutdown() {
-  console.log('\nShutting down…')
-  await closeBrowser()
-  server.close(() => process.exit(0))
+  try {
+    if (sessionNeedsPuppeteerMaterialization(linkedInFile)) {
+      await materializeLinkedInSessionFromLiAt(linkedInFile.liAt, linkedInFile.username)
+      console.log(`✅  LinkedIn session materialized on startup (user: ${linkedInFile.username})`)
+      return
+    }
+    const puppeteerCookies = sessionFileToPuppeteerCookies(linkedInFile)
+    saveSession('linkedin', {
+      cookies: puppeteerCookies,
+      loggedInAt: new Date(linkedInFile.capturedAt),
+      username: linkedInFile.username,
+    })
+    console.log(`✅  LinkedIn session pre-loaded (${puppeteerCookies.length} cookies, user: ${linkedInFile.username})`)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`⚠️   LinkedIn startup session failed: ${msg}`)
+    try {
+      const again = readLinkedInSessionFile()
+      if (!again) return
+      const fallback = sessionFileToPuppeteerCookies(again)
+      if (fallback.length > 0) {
+        saveSession('linkedin', {
+          cookies: fallback,
+          loggedInAt: new Date(again.capturedAt),
+          username: again.username,
+        })
+        console.log('✅  LinkedIn session pre-loaded (li_at fallback only — run import again if scrapes fail)')
+      }
+    } catch {
+      // ignore
+    }
+  }
 }
 
-process.on('SIGINT', shutdown)
-process.on('SIGTERM', shutdown)
+// ── Start ─────────────────────────────────────────────────────────────────────
+void preloadLinkedInSessionFromDisk().finally(() => {
+  const server = app.listen(PORT, () => {
+    console.log(`✅  JobHawk API  →  http://localhost:${PORT}`)
+    console.log(`   Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`)
+  })
+
+  async function shutdown() {
+    console.log('\nShutting down…')
+    await closeLinkedInFirefoxBrowser()
+    await closeBrowser()
+    server.close(() => process.exit(0))
+  }
+
+  process.on('SIGINT', shutdown)
+  process.on('SIGTERM', shutdown)
+})
+

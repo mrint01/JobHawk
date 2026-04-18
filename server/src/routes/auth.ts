@@ -16,10 +16,15 @@ import { Router, type Request, type Response } from 'express'
 import type { Page, Protocol } from 'puppeteer'
 import { getAuthBrowserPage, getBrowserPage, sleep } from '../utils/browser'
 import { saveSession, clearSession, allSessions } from '../utils/sessions'
+import { getLinkedInFirefoxPage } from '../utils/linkedinFirefox'
+import { playwrightCookiesToProtocol } from '../utils/linkedinPlaywrightCookies'
+import { materializeLinkedInSessionFromLiAt } from '../utils/linkedinBootstrap'
 import {
   readLinkedInSessionFile,
-  writeLinkedInSessionFile,
   isLinkedInSessionExpired,
+  sessionFileToPuppeteerCookies,
+  sessionNeedsPuppeteerMaterialization,
+  type LinkedInCookieEntry,
 } from '../utils/linkedinSession'
 
 const router = Router()
@@ -499,6 +504,71 @@ async function waitForManualPlatformLogin(
   return 'timeout'
 }
 
+async function waitForManualPlatformLoginPlaywright(
+  page: import('playwright').Page,
+  opts: {
+    label: string
+    loginIndicators: string[]
+    requiredCookieNames?: string[]
+    maxWaitMs?: number
+  },
+): Promise<ManualLoginOutcome> {
+  const maxWaitMs = opts.maxWaitMs ?? MANUAL_LOGIN_WAIT_MS
+  const started = Date.now()
+  console.log(`[auth/${opts.label}] waiting for manual login (Firefox)`)
+
+  while (Date.now() - started < maxWaitMs) {
+    if (page.isClosed()) return 'closed'
+    await sleep(2000)
+    if (page.isClosed()) return 'closed'
+
+    const url = page.url().toLowerCase()
+    const cookies = await page.context().cookies()
+    const stillOnLoginLikePage = opts.loginIndicators.some((i) => url.includes(i))
+    const hasRequiredCookies =
+      (opts.requiredCookieNames?.length ?? 0) === 0
+        ? cookies.some((c) => /linkedin/i.test(c.domain))
+        : opts.requiredCookieNames!.every((name) =>
+            cookies.some((c) => c.name === name && /linkedin/i.test(c.domain)),
+          )
+
+    if (!stillOnLoginLikePage && hasRequiredCookies) return 'success'
+  }
+
+  return 'timeout'
+}
+
+async function runManualConnectLinkedInFirefox(): Promise<{ ok: boolean; username?: string; error?: string }> {
+  const username = 'manual-linkedin'
+  let page: import('playwright').Page | null = null
+  try {
+    page = await getLinkedInFirefoxPage()
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
+    await page.goto(
+      'https://www.linkedin.com/login?fromSignIn=true&trk=guest_homepage-basic_nav-header-signin',
+      { waitUntil: 'domcontentloaded', timeout: 30_000 },
+    )
+    await page.bringToFront().catch(() => undefined)
+
+    const outcome = await waitForManualPlatformLoginPlaywright(page, {
+      label: 'linkedin',
+      loginIndicators: ['/login', '/uas/login', 'checkpoint', 'challenge', 'verification'],
+      requiredCookieNames: ['li_at'],
+    })
+    if (outcome === 'closed') return { ok: false, error: 'Login window was closed. Click Connect and try again.' }
+    if (outcome === 'timeout') return { ok: false, error: 'Timed out waiting for manual linkedin login.' }
+
+    const raw = await page.context().cookies(['https://www.linkedin.com'])
+    const cookies = playwrightCookiesToProtocol(raw)
+    saveSession('linkedin', { cookies, loggedInAt: new Date(), username })
+    return { ok: true, username }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Login failed' }
+  } finally {
+    if (page) await page.close().catch(() => undefined)
+  }
+}
+
 async function runManualConnect(
   platform: PlatformId,
   setupPage: (page: Page) => Promise<void>,
@@ -660,26 +730,49 @@ router.get('/linkedin/capture-script', (_req: Request, res: Response) => {
 
 // Import session — called by the local capture script
 router.post('/linkedin/import-session', async (req: Request, res: Response) => {
-  const { liAt, username } = req.body as { liAt?: unknown; username?: unknown }
+  const { liAt, cookies, username } = req.body as { liAt?: unknown; cookies?: unknown; username?: unknown }
 
-  const token    = typeof liAt === 'string' ? liAt.trim() : ''
-  const uname    = typeof username === 'string' ? username.trim() : 'linkedin-user'
+  const uname = typeof username === 'string' ? username.trim() : 'linkedin-user'
+
+  // New format: full cookie jar sent by the Python script
+  let sessionCookies: LinkedInCookieEntry[] | undefined
+  let token = ''
+
+  if (Array.isArray(cookies) && cookies.length > 0) {
+    sessionCookies = (cookies as Array<Record<string, unknown>>).map((c) => ({
+      name:     String(c.name ?? ''),
+      value:    String(c.value ?? ''),
+      domain:   c.domain   ? String(c.domain)  : undefined,
+      path:     c.path     ? String(c.path)    : undefined,
+      secure:   Boolean(c.secure),
+      httpOnly: Boolean(c.httpOnly),
+      expiry:   typeof c.expiry === 'number' ? c.expiry : undefined,
+    }))
+    const liAtEntry = sessionCookies.find((c) => c.name === 'li_at')
+    token = liAtEntry?.value ?? ''
+  } else {
+    // Legacy: script sent only liAt
+    token = typeof liAt === 'string' ? liAt.trim() : ''
+  }
 
   if (!token) {
-    res.json({ ok: false, error: 'liAt token is required.' })
+    res.json({ ok: false, error: 'li_at cookie not found in the captured session.' })
     return
   }
 
-  writeLinkedInSessionFile({ liAt: token, capturedAt: new Date().toISOString(), username: uname })
+  if (Array.isArray(sessionCookies) && sessionCookies.length > 0) {
+    console.log(`[auth/linkedin] import: using li_at only (ignored ${sessionCookies.length} capture-browser cookies; not replayed in Puppeteer)`)
+  }
 
-  // Pre-load into memory immediately
-  saveSession('linkedin', {
-    cookies: [{ name: 'li_at', value: token, domain: '.linkedin.com', path: '/', secure: true, httpOnly: true }],
-    loggedInAt: new Date(),
-    username: uname,
-  })
+  try {
+    await materializeLinkedInSessionFromLiAt(token, uname)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.error('[auth/linkedin] materialize failed:', msg)
+    res.json({ ok: false, error: msg })
+    return
+  }
 
-  console.log(`[auth/linkedin] session imported via capture script (user: ${uname})`)
   res.json({ ok: true })
 })
 
@@ -696,23 +789,7 @@ router.post('/linkedin/connect', async (_req: Request, res: Response) => {
   try {
     // ── Manual mode (dev only) ─────────────────────────────────────────────────
     if (AUTH_MODE === 'manual') {
-      const result = await runManualConnect(
-        'linkedin',
-        async (page) => {
-          await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
-          await page.goto(
-            'https://www.linkedin.com/login?fromSignIn=true&trk=guest_homepage-basic_nav-header-signin',
-            { waitUntil: 'domcontentloaded', timeout: 30_000 },
-          )
-          await page.bringToFront().catch(() => undefined)
-        },
-        {
-          label: 'linkedin',
-          loginIndicators: ['/login', '/uas/login', 'checkpoint', 'challenge', 'verification'],
-          requiredCookieNames: ['li_at'],
-        },
-        'manual-linkedin',
-      )
+      const result = await runManualConnectLinkedInFirefox()
       res.json(result)
       return
     }
@@ -738,14 +815,24 @@ router.post('/linkedin/connect', async (_req: Request, res: Response) => {
       return
     }
 
-    // Load into memory
-    saveSession('linkedin', {
-      cookies: [{ name: 'li_at', value: fileSession.liAt, domain: '.linkedin.com', path: '/', secure: true, httpOnly: true }],
-      loggedInAt: new Date(fileSession.capturedAt),
-      username: fileSession.username,
-    })
-
-    console.log(`[auth/linkedin] session loaded from file (user: ${fileSession.username})`)
+    try {
+      if (sessionNeedsPuppeteerMaterialization(fileSession)) {
+        await materializeLinkedInSessionFromLiAt(fileSession.liAt, fileSession.username)
+      } else {
+        const puppeteerCookies = sessionFileToPuppeteerCookies(fileSession)
+        saveSession('linkedin', {
+          cookies: puppeteerCookies,
+          loggedInAt: new Date(fileSession.capturedAt),
+          username: fileSession.username,
+        })
+        console.log(`[auth/linkedin] session loaded from file (${puppeteerCookies.length} cookies, user: ${fileSession.username})`)
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      console.error('[auth/linkedin] connect (headless) failed:', msg)
+      res.json({ ok: false, error: msg })
+      return
+    }
     res.json({ ok: true, username: fileSession.username })
   } finally {
     activeConnectLocks.delete('linkedin')

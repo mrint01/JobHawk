@@ -13,7 +13,7 @@
  */
 import type { Page } from 'playwright'
 import type { Protocol } from 'puppeteer'
-import { closeLinkedInFirefoxBrowser, getLinkedInFirefoxPage } from '../utils/linkedinFirefox'
+import { getLinkedInFirefoxPage } from '../utils/linkedinFirefox'
 import { playwrightCookiesToProtocol, protocolCookiesToPlaywright } from '../utils/linkedinPlaywrightCookies'
 import { jitter, sleep } from '../utils/browser'
 import { sanitizeLinkedInCookiesForReplay } from '../utils/linkedinCookies'
@@ -520,7 +520,9 @@ export async function scrapeLinkedIn(
       })
       return []
     }
-    await page.context().clearCookies()
+    // Do NOT clear the whole cookie jar here — that wipes local/session storage LinkedIn uses and
+    // looks like a brand-new client every scrape (429, NS_ERROR_NET_EMPTY_RESPONSE). Manual Connect
+    // keeps a live profile; we only merge/overwrite cookies from memory (same as reconnecting tabs).
     await page.context().addCookies(protocolCookiesToPlaywright(replayCookies))
     await page.setExtraHTTPHeaders({ 'Accept-Language': 'en-US,en;q=0.9' })
 
@@ -826,7 +828,9 @@ export async function scrapeLinkedIn(
     onProgress({ type: 'error', platform: 'linkedin', error: msg })
     return []
   } finally {
+    // Close tab only — keep Firefox + browser context alive so the next scrape reuses the same
+    // session fingerprint (like AUTH_MANUAL_CONNECT). Tearing down the whole browser each run
+    // triggered 429 and flaky navigations.
     if (page) await page.close().catch(() => undefined)
-    await closeLinkedInFirefoxBrowser().catch(() => undefined)
   }
 }

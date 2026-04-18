@@ -16,7 +16,7 @@ import { Router, type Request, type Response } from 'express'
 import type { Page, Protocol } from 'puppeteer'
 import { getAuthBrowserPage, getBrowserPage, sleep } from '../utils/browser'
 import { saveSession, clearSession, allSessions } from '../utils/sessions'
-import { getLinkedInFirefoxPage } from '../utils/linkedinFirefox'
+import { closeLinkedInFirefoxBrowser, getLinkedInFirefoxPage } from '../utils/linkedinFirefox'
 import { playwrightCookiesToProtocol } from '../utils/linkedinPlaywrightCookies'
 import { materializeLinkedInSessionFromLiAt } from '../utils/linkedinBootstrap'
 import {
@@ -709,8 +709,12 @@ router.get('/status', (_req: Request, res: Response) => {
 })
 
 // Disconnect
-router.post('/:platform/disconnect', (req: Request, res: Response) => {
-  clearSession(String(req.params.platform))
+router.post('/:platform/disconnect', async (req: Request, res: Response) => {
+  const platform = String(req.params.platform)
+  clearSession(platform)
+  if (platform === 'linkedin') {
+    await closeLinkedInFirefoxBrowser().catch(() => undefined)
+  }
   res.json({ ok: true })
 })
 

@@ -16,11 +16,9 @@ import { Router, type Request, type Response } from 'express'
 import type { Page, Protocol } from 'puppeteer'
 import { getAuthBrowserPage, getBrowserPage, sleep } from '../utils/browser'
 import { saveSession, clearSession, allSessions } from '../utils/sessions'
-import { validateLinkedInToken } from '../utils/linkedinApi'
 import {
   readLinkedInSessionFile,
   writeLinkedInSessionFile,
-  deleteLinkedInSessionFile,
   isLinkedInSessionExpired,
 } from '../utils/linkedinSession'
 
@@ -736,19 +734,6 @@ router.post('/linkedin/connect', async (_req: Request, res: Response) => {
         ok: false,
         expired: true,
         error: 'LinkedIn session has expired (>330 days). Run the capture script again.',
-      })
-      return
-    }
-
-    // Validate the token is still accepted by LinkedIn
-    const validation = await validateLinkedInToken(fileSession.liAt)
-    if (!validation.ok) {
-      // Token was rejected — delete the stale file so next connect attempt is clean
-      deleteLinkedInSessionFile()
-      res.json({
-        ok: false,
-        expired: true,
-        error: validation.error ?? 'LinkedIn token was rejected. Run the capture script again.',
       })
       return
     }

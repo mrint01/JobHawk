@@ -29,7 +29,8 @@ def check_selenium():
 
 
 def main():
-    backend = "http://localhost:3001"
+    backend = "http://localhost:5173"
+    #"https://jobhawk-server-production.up.railway.app"
     args = sys.argv[1:]
 
     if "--url" in args:

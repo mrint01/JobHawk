@@ -88,6 +88,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [authMode, setAuthMode] = useState<'manual' | 'headless'>('manual')
   const [platformConnecting, setPlatformConnecting] = useState<Platform | null>(null)
   const jobsLoadedRef = useRef(false)
+  const prevLinkedinConnected = useRef<boolean | null>(null)
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), [])
 
@@ -119,10 +120,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAuthMode(result.authMode)
 
       if (result.online) {
+        const isLinkedinNowConnected = result.connectedPlatforms.includes('linkedin')
+        if (prevLinkedinConnected.current === true && !isLinkedinNowConnected) {
+          addToast('LinkedIn session expired or removed. Please reconnect in Settings.', 'error')
+        }
+        prevLinkedinConnected.current = isLinkedinNowConnected
+
         // Sync platform connection state from server sessions
         setAppState((s) => ({
           ...s,
-          linkedinConnected: result.connectedPlatforms.includes('linkedin'),
+          linkedinConnected: isLinkedinNowConnected,
           stepstonConnected: result.connectedPlatforms.includes('stepstone'),
           xingConnected: result.connectedPlatforms.includes('xing'),
         }))

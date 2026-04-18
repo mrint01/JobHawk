@@ -425,7 +425,7 @@ function PlatformCard({ platform }: { platform: Platform }) {
               <div className="space-y-1">
                 <p className="text-xs text-blue-600 dark:text-blue-400/80 font-medium">2. Run the script:</p>
                 <code className="block text-xs bg-blue-100 dark:bg-blue-500/20 text-blue-900 dark:text-blue-200 rounded-lg px-3 py-1.5 font-mono">
-                  python3 linkedin_capture.py --url {'{YOUR_RAILWAY_URL}'}
+                  python3 linkedin_capture.py
                 </code>
               </div>
               <a

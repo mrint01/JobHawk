@@ -6,7 +6,7 @@ import path from 'path'
 import scrapeRouter from './routes/scrape'
 import authRouter, { AUTH_MODE } from './routes/auth'
 import jobsRouter from './routes/jobs'
-import { allSessions, saveSession } from './utils/sessions'
+import { allSessions, saveSession, hasSession, clearSession } from './utils/sessions'
 import { closeBrowser } from './utils/browser'
 import { readLinkedInSessionFile, isLinkedInSessionExpired } from './utils/linkedinSession'
 
@@ -90,6 +90,16 @@ if (linkedInFile && !isLinkedInSessionExpired(linkedInFile)) {
 } else if (linkedInFile) {
   console.log('⚠️   LinkedIn session file found but expired — run the capture script again')
 }
+
+// ── LinkedIn session watchdog (every 30 min) ──────────────────────────────────
+setInterval(() => {
+  if (!hasSession('linkedin')) return
+  const file = readLinkedInSessionFile()
+  if (!file || isLinkedInSessionExpired(file)) {
+    clearSession('linkedin')
+    console.log('[session-monitor] LinkedIn session cleared — file missing or expired')
+  }
+}, 30 * 60 * 1000)
 
 // ── Start ─────────────────────────────────────────────────────────────────────
 const server = app.listen(PORT, () => {

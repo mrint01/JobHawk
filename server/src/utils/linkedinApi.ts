@@ -1,17 +1,9 @@
 /**
- * LinkedIn Voyager API client — pure HTTP, zero browser automation.
+ * LinkedIn Voyager API client — pure HTTP, no browser automation.
  *
- * Why no Puppeteer: Headless Chromium sessions are detected by LinkedIn's
- * anti-bot system via CDP fingerprints. Detection triggers server-side
- * revocation of the li_at token, logging the user out everywhere.
- *
- * Plain HTTP fetch() with li_at + a fake JSESSIONID is indistinguishable
- * from a normal in-browser XHR/fetch call and does NOT trigger revocation.
- *
- * JSESSIONID / CSRF: LinkedIn uses "ajax:<random>" as the JSESSIONID cookie
- * value and mirrors it as the Csrf-Token header. We generate our own random
- * value — the server only checks that they match, not that they came from a
- * real session.
+ * JSESSIONID / CSRF: LinkedIn's CSRF check requires a matching JSESSIONID cookie
+ * + Csrf-Token header using the "ajax:<random>" format. We generate our own — the
+ * server only checks that they match, not that they came from a real session.
  */
 
 import type { ScrapedJob } from '../scrapers/types'
@@ -47,45 +39,6 @@ export function buildLinkedInHeaders(liAt: string, csrf: string): Record<string,
   }
 }
 
-// ── Token validation ──────────────────────────────────────────────────────────
-
-export async function validateLinkedInToken(liAt: string): Promise<{ ok: boolean; error?: string }> {
-  const csrf = generateCsrfToken()
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 12_000)
-
-  try {
-    const resp = await fetch(`${VOYAGER}/me`, {
-      headers: buildLinkedInHeaders(liAt, csrf),
-      signal: controller.signal,
-    })
-    clearTimeout(timer)
-
-    if (resp.status === 200) return { ok: true }
-
-    if (resp.status === 401 || resp.status === 403) {
-      return {
-        ok: false,
-        error:
-          'Token is invalid or already expired. ' +
-          'In your browser: go to linkedin.com → F12 → Application → Cookies → copy the li_at value.',
-      }
-    }
-    if (resp.status === 429) {
-      return { ok: false, error: 'LinkedIn rate limit hit. Wait a few minutes and try again.' }
-    }
-    return { ok: false, error: `LinkedIn returned HTTP ${resp.status}. Try a fresh li_at token.` }
-  } catch (err) {
-    clearTimeout(timer)
-    const msg = err instanceof Error ? err.message : String(err)
-    if (msg.includes('abort') || msg.includes('AbortError')) {
-      // Timeout → store optimistically; scraping will catch truly dead tokens
-      return { ok: true }
-    }
-    return { ok: false, error: `Could not reach LinkedIn: ${msg}` }
-  }
-}
-
 // ── Location → geoId resolution ───────────────────────────────────────────────
 
 async function resolveGeoId(location: string, liAt: string, csrf: string): Promise<string | null> {
@@ -97,22 +50,41 @@ async function resolveGeoId(location: string, liAt: string, csrf: string): Promi
       usecase: 'GEO_ID_FROM_SEARCH_HISTORY',
       count: '5',
     })
-    const resp = await fetch(`${VOYAGER}/typeahead/hitsV2?${params}`, {
-      headers: buildLinkedInHeaders(liAt, csrf),
-    })
-    if (!resp.ok) return null
+    const url = `${VOYAGER}/typeahead/hitsV2?${params}`
+    const resp = await fetch(url, { headers: buildLinkedInHeaders(liAt, csrf) })
 
-    const data = await resp.json() as {
-      included?: Array<{ $type?: string; hitInfo?: { geoUrn?: string } }>
+    console.log(`[linkedin-api] typeahead status: ${resp.status}`)
+    if (!resp.ok) {
+      console.log(`[linkedin-api] typeahead failed with status ${resp.status}`)
+      return null
     }
+
+    const raw = await resp.text()
+    console.log(`[linkedin-api] typeahead raw (first 500): ${raw.slice(0, 500)}`)
+
+    const data = JSON.parse(raw) as {
+      included?: Array<{
+        $type?: string
+        hitInfo?: { $type?: string; geoUrn?: string; displayName?: string }
+      }>
+    }
+
     for (const item of data.included ?? []) {
-      if (item.$type?.includes('GeoEntityHit') && item.hitInfo?.geoUrn) {
-        const m = item.hitInfo.geoUrn.match(/\d+$/)
-        if (m) return m[0]
+      // The outer item.$type is "TypeaheadHit"; the geo info is in hitInfo.$type
+      const geoUrn = item.hitInfo?.geoUrn
+      if (geoUrn) {
+        const m = geoUrn.match(/\d+$/)
+        if (m) {
+          console.log(`[linkedin-api] geoId resolved: ${m[0]} for "${item.hitInfo?.displayName}"`)
+          return m[0]
+        }
       }
     }
+
+    console.log('[linkedin-api] typeahead: no geoUrn found in included array')
     return null
-  } catch {
+  } catch (err) {
+    console.log(`[linkedin-api] typeahead error: ${err instanceof Error ? err.message : err}`)
     return null
   }
 }
@@ -169,9 +141,15 @@ async function fetchJobPage(
   locationText: string,
   start: number,
 ): Promise<{ jobs: ScrapedJob[]; total: number }> {
-  const locationPart = geoId
-    ? `locationUnion:(geoId:${geoId})`
-    : `location:${locationText}`
+  let locationPart: string
+  if (geoId) {
+    locationPart = `locationUnion:(geoId:${geoId})`
+  } else {
+    // Commas break LinkedIn's parenthetical query syntax — use city name only
+    const cityOnly = locationText.split(',')[0].trim()
+    locationPart = `location:${cityOnly}`
+    console.log(`[linkedin-api] text location fallback: "${cityOnly}"`)
+  }
 
   const query =
     `(origin:JOB_SEARCH_PAGE_SEARCH_BUTTON,` +
@@ -189,23 +167,32 @@ async function fetchJobPage(
     sortBy: 'DD',
   })
 
-  const resp = await fetch(`${VOYAGER}/jobs/search?${params}`, {
-    headers: buildLinkedInHeaders(liAt, csrf),
-  })
+  const url = `${VOYAGER}/jobs/search?${params}`
+  console.log(`[linkedin-api] job search URL: ${url.slice(0, 300)}`)
+
+  const resp = await fetch(url, { headers: buildLinkedInHeaders(liAt, csrf) })
+  console.log(`[linkedin-api] job search status: ${resp.status}`)
 
   if (resp.status === 401 || resp.status === 403) {
-    throw Object.assign(new Error('LinkedIn token expired or revoked'), { code: 'UNAUTHORIZED' })
+    throw Object.assign(new Error('LinkedIn token expired or revoked — reconnect in Settings.'), { code: 'UNAUTHORIZED' })
   }
   if (resp.status === 429) {
-    throw Object.assign(new Error('LinkedIn rate limit hit (429). Wait 15-30 minutes.'), { code: 'RATE_LIMITED' })
+    throw Object.assign(new Error('LinkedIn rate limit (429). Wait 15–30 minutes and try again.'), { code: 'RATE_LIMITED' })
   }
   if (!resp.ok) {
+    const body = await resp.text().catch(() => '')
+    console.log(`[linkedin-api] job search error body (first 300): ${body.slice(0, 300)}`)
     throw new Error(`LinkedIn API returned ${resp.status}`)
   }
 
-  const data = await resp.json() as VoyagerResponse
+  const raw = await resp.text()
+  console.log(`[linkedin-api] job search raw (first 500): ${raw.slice(0, 500)}`)
+
+  const data = JSON.parse(raw) as VoyagerResponse
   const total = data.data?.paging?.total ?? 0
   const included = data.included ?? []
+
+  console.log(`[linkedin-api] paging total=${total}, included entries=${included.length}`)
 
   // Build company URN → name lookup from MiniCompany entries
   const companyMap = new Map<string, string>()
@@ -242,6 +229,7 @@ async function fetchJobPage(
     })
   }
 
+  console.log(`[linkedin-api] extracted ${jobs.length} jobs from page (start=${start})`)
   return { jobs, total }
 }
 
@@ -255,45 +243,36 @@ export async function scrapeLinkedInViaApi(
 ): Promise<{ jobs: ScrapedJob[]; error?: string; code?: string }> {
   const csrf = generateCsrfToken()
 
-  // Resolve location → geoId for accurate geo-filtering
   const geoId = await resolveGeoId(location, liAt, csrf)
-  console.log(
-    `[linkedin-api] location="${location}" → geoId=${geoId ?? 'none (using text fallback)'}`,
-  )
+  console.log(`[linkedin-api] location="${location}" → geoId=${geoId ?? 'none (using text fallback)'}`)
 
   onProgress(15)
 
   const collected = new Map<string, ScrapedJob>()
   let total = Infinity
 
-  // Fetch up to 2 pages (50 results); limitScrapedJobs will trim to 25 sorted by date
   for (let start = 0; start < 50 && start < total; start += 25) {
     try {
-      const { jobs, total: pageTotal } = await fetchJobPage(
-        liAt,
-        csrf,
-        jobTitle,
-        geoId,
-        location,
-        start,
-      )
+      const { jobs, total: pageTotal } = await fetchJobPage(liAt, csrf, jobTitle, geoId, location, start)
+
       if (start === 0) {
         total = pageTotal
         console.log(`[linkedin-api] total available results: ${total}`)
       }
-      for (const job of jobs) collected.set(job.url, job)
 
-      onProgress(15 + Math.round(((start + 25) / Math.min(total, 50)) * 75))
+      for (const job of jobs) collected.set(job.url, job)
+      onProgress(15 + Math.round(((start + 25) / Math.min(Math.max(total, 1), 50)) * 75))
 
       if (start + 25 < Math.min(total, 50)) {
         await new Promise((r) => setTimeout(r, 600))
       }
     } catch (err) {
       const e = err as Error & { code?: string }
+      console.log(`[linkedin-api] fetchJobPage error: ${e.message}`)
       return { jobs: [], error: e.message, code: e.code }
     }
   }
 
-  console.log(`[linkedin-api] collected ${collected.size} jobs`)
+  console.log(`[linkedin-api] collected ${collected.size} jobs total`)
   return { jobs: Array.from(collected.values()) }
 }

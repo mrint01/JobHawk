@@ -30,11 +30,22 @@ export interface ConnectPayload {
   token?: string
 }
 
+export interface AuthUser {
+  id: string
+  username: string
+  email: string
+  role: 'admin' | 'user'
+}
+
+function userHeaders(userId?: string): HeadersInit {
+  return userId ? { 'x-user-id': userId } : {}
+}
+
 // ── Health ────────────────────────────────────────────────────────────────────
 
-export async function fetchHealth(): Promise<HealthResult> {
+export async function fetchHealth(userId?: string): Promise<HealthResult> {
   try {
-    const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(4000) })
+    const res = await fetch(`${BASE}/api/health`, { signal: AbortSignal.timeout(4000), headers: userHeaders(userId) })
     if (!res.ok) return { online: false, connectedPlatforms: [], authMode: 'manual' }
     const data = await res.json() as { connectedPlatforms?: PlatformId[]; authMode?: 'manual' | 'headless' }
     return {
@@ -52,11 +63,12 @@ export async function fetchHealth(): Promise<HealthResult> {
 export async function connectPlatformApi(
   platform: PlatformId,
   payload?: ConnectPayload,
+  userId?: string,
 ): Promise<ConnectResult> {
   try {
     const res = await fetch(`${BASE}/api/auth/${platform}/connect`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...userHeaders(userId) },
       body: JSON.stringify(payload ?? {}),
       signal: AbortSignal.timeout(15 * 60_000), // allow manual login flow
     })
@@ -66,16 +78,16 @@ export async function connectPlatformApi(
   }
 }
 
-export async function disconnectPlatformApi(platform: PlatformId): Promise<void> {
-  await fetch(`${BASE}/api/auth/${platform}/disconnect`, { method: 'POST' }).catch(() => undefined)
+export async function disconnectPlatformApi(platform: PlatformId, userId?: string): Promise<void> {
+  await fetch(`${BASE}/api/auth/${platform}/disconnect`, { method: 'POST', headers: userHeaders(userId) }).catch(() => undefined)
 }
 
 // ── Jobs ──────────────────────────────────────────────────────────────────────
 
 /** Returns null when the request failed (do not treat as “zero jobs” and wipe UI). */
-export async function fetchJobsApi(): Promise<Job[] | null> {
+export async function fetchJobsApi(userId?: string): Promise<Job[] | null> {
   try {
-    const res = await fetch(`${BASE}/api/jobs`)
+    const res = await fetch(`${BASE}/api/jobs`, { headers: userHeaders(userId) })
     if (!res.ok) return null
     return await res.json() as Job[]
   } catch {
@@ -83,9 +95,9 @@ export async function fetchJobsApi(): Promise<Job[] | null> {
   }
 }
 
-export async function markJobAppliedApi(id: string): Promise<Job[]> {
+export async function markJobAppliedApi(id: string, userId?: string): Promise<Job[]> {
   try {
-    const res = await fetch(`${BASE}/api/jobs/${id}/apply`, { method: 'PATCH' })
+    const res = await fetch(`${BASE}/api/jobs/${id}/apply`, { method: 'PATCH', headers: userHeaders(userId) })
     if (!res.ok) return []
     return await res.json() as Job[]
   } catch {
@@ -93,9 +105,9 @@ export async function markJobAppliedApi(id: string): Promise<Job[]> {
   }
 }
 
-export async function markJobUnappliedApi(id: string): Promise<Job[]> {
+export async function markJobUnappliedApi(id: string, userId?: string): Promise<Job[]> {
   try {
-    const res = await fetch(`${BASE}/api/jobs/${id}/unapply`, { method: 'PATCH' })
+    const res = await fetch(`${BASE}/api/jobs/${id}/unapply`, { method: 'PATCH', headers: userHeaders(userId) })
     if (!res.ok) return []
     return await res.json() as Job[]
   } catch {
@@ -103,17 +115,102 @@ export async function markJobUnappliedApi(id: string): Promise<Job[]> {
   }
 }
 
-export async function clearJobsApi(): Promise<void> {
-  await fetch(`${BASE}/api/jobs`, { method: 'DELETE' }).catch(() => undefined)
+export async function clearJobsApi(userId?: string): Promise<void> {
+  await fetch(`${BASE}/api/jobs`, { method: 'DELETE', headers: userHeaders(userId) }).catch(() => undefined)
 }
 
 /** Deletes open offers only; returns updated job list or null on failure. */
-export async function clearJobOffersApi(): Promise<Job[] | null> {
+export async function clearJobOffersApi(userId?: string): Promise<Job[] | null> {
   try {
-    const res = await fetch(`${BASE}/api/jobs/offers`, { method: 'DELETE' })
+    const res = await fetch(`${BASE}/api/jobs/offers`, { method: 'DELETE', headers: userHeaders(userId) })
     if (!res.ok) return null
     return await res.json() as Job[]
   } catch {
     return null
+  }
+}
+
+export async function deleteJobApi(id: string, userId?: string): Promise<Job[] | null> {
+  try {
+    const res = await fetch(`${BASE}/api/jobs/${id}`, { method: 'DELETE', headers: userHeaders(userId) })
+    if (!res.ok) return null
+    return await res.json() as Job[]
+  } catch {
+    return null
+  }
+}
+
+export async function loginApi(usernameOrEmail: string, password: string): Promise<{ ok: boolean; user?: AuthUser; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/users/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ usernameOrEmail, password }),
+    })
+    return await res.json() as { ok: boolean; user?: AuthUser; error?: string }
+  } catch {
+    return { ok: false, error: 'Network error' }
+  }
+}
+
+export async function signupApi(username: string, email: string, password: string): Promise<{ ok: boolean; user?: AuthUser; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/users/signup`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password }),
+    })
+    return await res.json() as { ok: boolean; user?: AuthUser; error?: string }
+  } catch {
+    return { ok: false, error: 'Network error' }
+  }
+}
+
+export async function changePasswordApi(userId: string, currentPassword: string, nextPassword: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/api/users/password`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...userHeaders(userId) },
+      body: JSON.stringify({ currentPassword, nextPassword }),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+export async function fetchUsersApi(): Promise<AuthUser[]> {
+  try {
+    const res = await fetch(`${BASE}/api/users`)
+    if (!res.ok) return []
+    return await res.json() as AuthUser[]
+  } catch {
+    return []
+  }
+}
+
+export async function fetchAnalyticsSeriesApi(userId: string, from: string, targetUserId?: string): Promise<Array<{ date: string; appliedCount: number }>> {
+  try {
+    const params = new URLSearchParams({ from })
+    if (targetUserId) params.set('targetUserId', targetUserId)
+    const res = await fetch(`${BASE}/api/jobs/analytics/series?${params}`, {
+      headers: userHeaders(userId),
+    })
+    if (!res.ok) return []
+    return await res.json() as Array<{ date: string; appliedCount: number }>
+  } catch {
+    return []
+  }
+}
+
+export async function fetchAnalyticsUsersApi(userId: string, from: string): Promise<Array<{ userId: string; username: string; appliedCount: number }>> {
+  try {
+    const res = await fetch(`${BASE}/api/jobs/analytics/users?from=${encodeURIComponent(from)}`, {
+      headers: userHeaders(userId),
+    })
+    if (!res.ok) return []
+    return await res.json() as Array<{ userId: string; username: string; appliedCount: number }>
+  } catch {
+    return []
   }
 }

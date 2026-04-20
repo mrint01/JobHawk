@@ -1,4 +1,4 @@
-import { MapPin, Building2, ExternalLink, RotateCcw, Clock, CalendarCheck } from 'lucide-react'
+import { MapPin, Building2, ExternalLink, RotateCcw, Clock, CalendarCheck, Trash2 } from 'lucide-react'
 import type { Job } from '../types'
 import PlatformBadge from './PlatformBadge'
 import { useApp } from '../context/AppContext'
@@ -7,7 +7,7 @@ import { formatGermanDate, formatPostedTime } from '../time'
 interface Props { job: Job }
 
 export default function AppliedJobCard({ job }: Props) {
-  const { markUnapplied } = useApp()
+  const { markUnapplied, deleteJob } = useApp()
 
   const postedAgo = formatPostedTime(job.postedDate) || 'time unavailable'
 
@@ -60,22 +60,26 @@ export default function AppliedJobCard({ job }: Props) {
       </div>
 
       {/* Actions */}
-      <div className="mt-auto flex flex-col sm:flex-row items-stretch gap-2 pt-3 border-t border-gray-100 dark:border-slate-700/60">
+      <div className="mt-auto flex flex-col items-stretch gap-2 pt-3 border-t border-gray-100 dark:border-slate-700/60">
         <a
           href={job.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="btn-ghost w-full sm:flex-1 justify-center"
+          className="btn-ghost w-full justify-center"
         >
           <ExternalLink className="w-3.5 h-3.5" />
           View Job
         </a>
         <button
           onClick={() => markUnapplied(job.id)}
-          className="btn-secondary w-full sm:flex-1 justify-center hover:!text-amber-600 dark:hover:!text-amber-400"
+          className="btn-secondary w-full justify-center hover:!text-amber-600 dark:hover:!text-amber-400"
         >
           <RotateCcw className="w-3.5 h-3.5" />
           Unapply
+        </button>
+        <button onClick={() => deleteJob(job.id)} className="btn-danger w-full justify-center border border-red-200 dark:border-red-500/30">
+          <Trash2 className="w-3.5 h-3.5" />
+          Delete
         </button>
       </div>
     </div>

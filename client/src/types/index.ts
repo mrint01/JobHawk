@@ -6,6 +6,7 @@ export type Theme = 'dark' | 'light'
 
 export interface Job {
   id: string
+  userId?: string
   title: string
   company: string
   location: string
@@ -46,7 +47,10 @@ export interface ScrapeProgress {
 export interface AppState {
   isLoggedIn: boolean
   theme: Theme
-  password: string // stored locally (no backend)
+  userId: string
+  username: string
+  email: string
+  role: 'admin' | 'user'
   linkedinConnected: boolean
   stepstonConnected: boolean
   xingConnected: boolean

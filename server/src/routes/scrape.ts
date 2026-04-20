@@ -13,9 +13,12 @@ import { scrapeStepStone } from '../scrapers/stepstone'
 import { scrapeXing } from '../scrapers/xing'
 import type { Platform, ScrapedJob, ScrapeEvent, ProgressCallback } from '../scrapers/types'
 import { closeScrapeBrowser } from '../utils/browser'
-import { mergeJobs } from '../utils/jobStore'
+import { mergeJobsForUser } from '../utils/jobStore'
 
 const router = Router()
+function getUserId(req: Request): string {
+  return String(req.header('x-user-id') || 'admin')
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -25,7 +28,7 @@ function parsePlatforms(raw: string | undefined): Platform[] {
   return raw.split(',').filter((p): p is Platform => ALL.includes(p as Platform))
 }
 
-type ScraperFn = (title: string, location: string, cb: ProgressCallback) => Promise<ScrapedJob[]>
+type ScraperFn = (title: string, location: string, cb: ProgressCallback, userId: string) => Promise<ScrapedJob[]>
 
 function buildScrapers(platforms: Platform[]): Record<Platform, ScraperFn | null> {
   return {
@@ -38,6 +41,7 @@ function buildScrapers(platforms: Platform[]): Record<Platform, ScraperFn | null
 // ── POST /api/scrape ──────────────────────────────────────────────────────────
 
 router.post('/', async (req: Request, res: Response) => {
+  const userId = getUserId(req)
   const { jobTitle, location = '', platforms: rawPlatforms } = req.body as {
     jobTitle?: string
     location?: string
@@ -60,7 +64,7 @@ router.post('/', async (req: Request, res: Response) => {
       if (!fn) continue
 
       try {
-        const jobs = await fn(jobTitle.trim(), location.trim(), (evt) => events.push(evt))
+        const jobs = await fn(jobTitle.trim(), location.trim(), (evt) => events.push(evt), userId)
         allJobs.push(...jobs)
       } catch (err) {
         events.push({
@@ -74,7 +78,8 @@ router.post('/', async (req: Request, res: Response) => {
     // Sort newest first
     allJobs.sort((a, b) => new Date(b.postedDate).getTime() - new Date(a.postedDate).getTime())
 
-    res.json({ jobs: allJobs, events })
+    const saved = mergeJobsForUser(userId, allJobs)
+    res.json({ jobs: saved, events })
   } finally {
     await closeScrapeBrowser().catch(() => undefined)
   }
@@ -83,6 +88,7 @@ router.post('/', async (req: Request, res: Response) => {
 // ── GET /api/scrape/stream  (SSE) ─────────────────────────────────────────────
 
 router.get('/stream', (req: Request, res: Response) => {
+  const userId = getUserId(req)
   const { jobTitle, location = '', platforms: rawPlatforms } = req.query as {
     jobTitle?: string
     location?: string
@@ -121,6 +127,7 @@ router.get('/stream', (req: Request, res: Response) => {
             send(evt)
             if (evt.type === 'jobs') allJobs.push(...(evt.jobs ?? []))
           },
+          userId,
         )
         allJobs.push(...jobs)
         send({ type: 'jobs', platform, jobs, progress: 100 })
@@ -135,7 +142,7 @@ router.get('/stream', (req: Request, res: Response) => {
   })()
     .then(() => {
       // Persist to server-side JSON store, then send final result
-      const saved = mergeJobs(allJobs)
+      const saved = mergeJobsForUser(userId, allJobs)
       send({ type: 'done', jobs: saved, totalJobs: saved.length })
       res.end()
     })

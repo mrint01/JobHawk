@@ -1,4 +1,4 @@
-import { MapPin, Building2, ExternalLink, CheckCheck, Clock } from 'lucide-react'
+import { MapPin, Building2, ExternalLink, CheckCheck, Clock, Trash2 } from 'lucide-react'
 import type { Job } from '../types'
 import PlatformBadge from './PlatformBadge'
 import { useApp } from '../context/AppContext'
@@ -7,7 +7,7 @@ import { formatPostedTime } from '../time'
 interface Props { job: Job }
 
 export default function JobCard({ job }: Props) {
-  const { markApplied } = useApp()
+  const { markApplied, deleteJob } = useApp()
 
   const timeAgo = formatPostedTime(job.postedDate) || 'time unavailable'
 
@@ -48,19 +48,23 @@ export default function JobCard({ job }: Props) {
       </div>
 
       {/* Actions */}
-      <div className="mt-auto flex flex-col sm:flex-row items-stretch gap-2 pt-3 border-t border-gray-100 dark:border-slate-700">
+      <div className="mt-auto flex flex-col items-stretch gap-2 pt-3 border-t border-gray-100 dark:border-slate-700">
         <a
           href={job.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="btn-secondary w-full sm:flex-1 justify-center"
+          className="btn-secondary w-full justify-center"
         >
           <ExternalLink className="w-3.5 h-3.5" />
           View Job
         </a>
-        <button onClick={() => markApplied(job.id)} className="btn-primary w-full sm:flex-1 justify-center">
+        <button onClick={() => markApplied(job.id)} className="btn-primary w-full justify-center">
           <CheckCheck className="w-3.5 h-3.5" />
           Mark Applied
+        </button>
+        <button onClick={() => deleteJob(job.id)} className="btn-danger w-full justify-center border border-red-200 dark:border-red-500/30">
+          <Trash2 className="w-3.5 h-3.5" />
+          Delete
         </button>
       </div>
     </div>

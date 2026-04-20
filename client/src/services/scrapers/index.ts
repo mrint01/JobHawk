@@ -28,6 +28,7 @@ function initState(platforms: Platform[]): Record<Platform, PlatformProgress> {
 function toJob(raw: Record<string, any>): Job {
   return {
     id: (raw.id as string | undefined) ?? nanoid(),
+    userId: raw.userId as string | undefined,
     title: (raw.title as string | undefined) ?? '',
     company: (raw.company as string | undefined) ?? '',
     location: (raw.location as string | undefined) ?? '',
@@ -44,6 +45,7 @@ function toJob(raw: Record<string, any>): Job {
 export function scrapeAll(
   params: ScrapeParams,
   platforms: Platform[],
+  userId: string,
   onProgress: ProgressCallback,
 ): Promise<Job[]> {
   if (platforms.length === 0) return Promise.resolve([])
@@ -81,7 +83,7 @@ export function scrapeAll(
     })
     const url = `${API_BASE}/api/scrape/stream?${qs}`
 
-    fetch(url)
+    fetch(url, { headers: userId ? { 'x-user-id': userId } : undefined })
       .then(async (response) => {
         if (!response.ok) throw new Error(`Server responded ${response.status}`)
         if (!response.body) throw new Error('No response body')

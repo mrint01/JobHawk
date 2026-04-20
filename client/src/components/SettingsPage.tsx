@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
-  Sun, Moon, KeyRound, AlertCircle, CheckCircle,
-  Check, Unlink, Wifi, Loader2, Eye, EyeOff, WifiOff, Download,
+  Sun, Moon, AlertCircle, Check, KeyRound,
+  Unlink, Wifi, Loader2, Eye, EyeOff, WifiOff,
 } from 'lucide-react'
 import type { Platform } from '../types'
 import { useApp } from '../context/AppContext'
-import { BASE } from '../services/api'
 
 // ── Server offline banner ─────────────────────────────────────────────────────
 function ServerBanner() {
@@ -120,7 +119,6 @@ function AppearanceSection() {
   )
 }
 
-// ── Security ──────────────────────────────────────────────────────────────────
 function SecuritySection() {
   const { changePassword, addToast } = useApp()
   const [current, setCurrent] = useState('')
@@ -131,17 +129,14 @@ function SecuritySection() {
   const [showCurrent, setShowCurrent] = useState(false)
   const [showNext, setShowNext] = useState(false)
 
-  function handleSubmit(e: React.FormEvent) {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setError('')
     setSuccess(false)
-
     if (next.length < 4) { setError('New password must be at least 4 characters'); return }
     if (next !== confirm) { setError('Passwords do not match'); return }
-
-    const ok = changePassword(current, next)
+    const ok = await changePassword(current, next)
     if (!ok) { setError('Current password is incorrect'); return }
-
     addToast('Password changed successfully!', 'success')
     setSuccess(true)
     setCurrent(''); setNext(''); setConfirm('')
@@ -152,81 +147,30 @@ function SecuritySection() {
     <Section title="Security" description="Update your account password.">
       <form onSubmit={handleSubmit} className="max-w-sm space-y-3">
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
-            Current password
-          </label>
+          <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">Current password</label>
           <div className="relative">
-            <input
-              type={showCurrent ? 'text' : 'password'}
-              className="input pr-10"
-              placeholder="Enter current password"
-              value={current}
-              onChange={(e) => setCurrent(e.target.value)}
-              required
-            />
-            <button
-              type="button"
-              onClick={() => setShowCurrent((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
-            >
+            <input type={showCurrent ? 'text' : 'password'} className="input pr-10" placeholder="Enter current password" value={current} onChange={(e) => setCurrent(e.target.value)} required />
+            <button type="button" onClick={() => setShowCurrent((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">
               {showCurrent ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
-            New password
-          </label>
+          <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">New password</label>
           <div className="relative">
-            <input
-              type={showNext ? 'text' : 'password'}
-              className="input pr-10"
-              placeholder="At least 4 characters"
-              value={next}
-              onChange={(e) => setNext(e.target.value)}
-              required
-            />
-            <button
-              type="button"
-              onClick={() => setShowNext((v) => !v)}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
-            >
+            <input type={showNext ? 'text' : 'password'} className="input pr-10" placeholder="At least 4 characters" value={next} onChange={(e) => setNext(e.target.value)} required />
+            <button type="button" onClick={() => setShowNext((v) => !v)} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300">
               {showNext ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
             </button>
           </div>
         </div>
         <div>
-          <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
-            Confirm new password
-          </label>
-          <input
-            type="password"
-            className="input"
-            placeholder="Repeat new password"
-            value={confirm}
-            onChange={(e) => setConfirm(e.target.value)}
-            required
-          />
+          <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">Confirm new password</label>
+          <input type="password" className="input" placeholder="Repeat new password" value={confirm} onChange={(e) => setConfirm(e.target.value)} required />
         </div>
-
-        {error && (
-          <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-3 py-2.5">
-            <AlertCircle className="w-4 h-4 flex-shrink-0" />
-            {error}
-          </div>
-        )}
-
-        {success && (
-          <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 rounded-xl px-3 py-2.5">
-            <CheckCircle className="w-4 h-4 flex-shrink-0" />
-            Password changed successfully!
-          </div>
-        )}
-
-        <button type="submit" className="btn-primary">
-          <KeyRound className="w-4 h-4" />
-          Update password
-        </button>
+        {error && <div className="flex items-center gap-2 text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-3 py-2.5"><AlertCircle className="w-4 h-4 flex-shrink-0" />{error}</div>}
+        {success && <div className="flex items-center gap-2 text-sm text-emerald-600 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 rounded-xl px-3 py-2.5">Password changed successfully!</div>}
+        <button type="submit" className="btn-primary"><KeyRound className="w-4 h-4" />Update password</button>
       </form>
     </Section>
   )
@@ -283,14 +227,9 @@ function PlatformCard({ platform }: { platform: Platform }) {
   const [showPassword, setShowPassword] = useState(false)
   const [inlineError, setInlineError] = useState('')
   const [formOpen, setFormOpen] = useState(false)
-  // LinkedIn-specific states
-  const [linkedinNoSession, setLinkedinNoSession] = useState(false)
-  const [linkedinExpired, setLinkedinExpired] = useState(false)
 
   useEffect(() => {
     setInlineError('')
-    setLinkedinNoSession(false)
-    setLinkedinExpired(false)
     setPassword('')
     setFormOpen(false)
   }, [platform, authMode, connected])
@@ -300,20 +239,6 @@ function PlatformCard({ platform }: { platform: Platform }) {
       await connectPlatform(platform)
       return
     }
-    // LinkedIn in headless mode: no form — just check the session file
-    if (platform === 'linkedin') {
-      setInlineError('')
-      setLinkedinNoSession(false)
-      setLinkedinExpired(false)
-      const result = await connectPlatform(platform)
-      if (!result.ok) {
-        if (result.noSession)  setLinkedinNoSession(true)
-        else if (result.expired) setLinkedinExpired(true)
-        else setInlineError(result.error ?? 'Connection failed.')
-      }
-      return
-    }
-    // StepStone / Xing: toggle credential form
     setFormOpen((v) => !v)
   }
 
@@ -405,53 +330,7 @@ function PlatformCard({ platform }: { platform: Platform }) {
         </p>
       )}
 
-      {/* LinkedIn headless mode: show session status messages, no form */}
-      {!connected && !isConnecting && platform === 'linkedin' && authMode === 'headless' && (linkedinNoSession || linkedinExpired || inlineError) && (
-        <div className="mt-3 space-y-2">
-          {(linkedinNoSession || linkedinExpired) && (
-            <div className="rounded-xl border border-blue-200 dark:border-blue-500/30 bg-blue-50 dark:bg-blue-500/10 p-3 space-y-2">
-              <p className="text-xs font-semibold text-blue-800 dark:text-blue-300">
-                {linkedinExpired ? 'Session expired — run the capture script again' : 'No LinkedIn session found'}
-              </p>
-              <p className="text-xs text-blue-700 dark:text-blue-400/90">
-                Download and run this script on your local machine. It opens Chrome, you log in to LinkedIn manually, and the session is sent to the server.
-              </p>
-              <div className="space-y-1">
-                <p className="text-xs text-blue-600 dark:text-blue-400/80 font-medium">1. Install dependency (once):</p>
-                <code className="block text-xs bg-blue-100 dark:bg-blue-500/20 text-blue-900 dark:text-blue-200 rounded-lg px-3 py-1.5 font-mono">
-                  pip install selenium
-                </code>
-              </div>
-              <div className="space-y-1">
-                <p className="text-xs text-blue-600 dark:text-blue-400/80 font-medium">2. Run the script:</p>
-                <code className="block text-xs bg-blue-100 dark:bg-blue-500/20 text-blue-900 dark:text-blue-200 rounded-lg px-3 py-1.5 font-mono">
-                  python3 linkedin_capture.py
-                </code>
-              </div>
-              <a
-                href={`${BASE}/api/auth/linkedin/capture-script`}
-                download="linkedin_capture.py"
-                className="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium bg-blue-600 hover:bg-blue-700 text-white transition-colors duration-150 mt-1"
-              >
-                <Download className="w-3.5 h-3.5" />
-                Download linkedin_capture.py
-              </a>
-              <p className="text-xs text-blue-600 dark:text-blue-400/80">
-                After the script finishes, click Connect again.
-              </p>
-            </div>
-          )}
-          {inlineError && (
-            <div className="flex items-center gap-2 text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 rounded-xl px-3 py-2">
-              <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />
-              {inlineError}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* StepStone / Xing credential form */}
-      {!connected && authMode === 'headless' && formOpen && platform !== 'linkedin' && (
+      {!connected && authMode === 'headless' && formOpen && (
         <div className="mt-4 rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/70 dark:bg-slate-900/40 p-3.5 space-y-3">
           <div>
             <label className="block text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">Email</label>

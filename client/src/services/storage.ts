@@ -5,7 +5,10 @@ const STATE_KEY = 'jobhawk_state'
 const DEFAULT_STATE: AppState = {
   isLoggedIn: false,
   theme: 'dark',
-  password: 'admin',
+  userId: '',
+  username: '',
+  email: '',
+  role: 'user',
   linkedinConnected: false,
   stepstonConnected: false,
   xingConnected: false,

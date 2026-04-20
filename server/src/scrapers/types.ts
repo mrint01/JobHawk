@@ -4,6 +4,7 @@ export type JobStatus = 'new' | 'applied'
 
 export interface Job {
   id: string
+  userId: string
   title: string
   company: string
   location: string

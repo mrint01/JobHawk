@@ -10,26 +10,20 @@
  * - LinkedIn tries { email, password }; if the post-login URL is not /feed,
  *   responds with requiresLinkedInCookie=true so the UI can ask for li_at token.
  */
-import fs from 'fs'
-import path from 'path'
 import { Router, type Request, type Response } from 'express'
 import type { Page, Protocol } from 'puppeteer'
 import { getAuthBrowserPage, getBrowserPage, sleep } from '../utils/browser'
-import { saveSession, clearSession, allSessions } from '../utils/sessions'
+import { saveSession, clearSession, sessionsForUser } from '../utils/sessions'
 import { closeLinkedInFirefoxBrowser, getLinkedInFirefoxPage } from '../utils/linkedinFirefox'
 import { playwrightCookiesToProtocol } from '../utils/linkedinPlaywrightCookies'
-import { materializeLinkedInSessionFromLiAt } from '../utils/linkedinBootstrap'
-import {
-  readLinkedInSessionFile,
-  isLinkedInSessionExpired,
-  sessionFileToPuppeteerCookies,
-  sessionNeedsPuppeteerMaterialization,
-  type LinkedInCookieEntry,
-} from '../utils/linkedinSession'
 
 const router = Router()
 const MANUAL_LOGIN_WAIT_MS = 10 * 60 * 1000
 const activeConnectLocks = new Set<'linkedin' | 'stepstone' | 'xing'>()
+
+function getUserId(req: { header(name: string): string | undefined }): string {
+  return String(req.header('x-user-id') || 'admin')
+}
 
 const manualFlag = process.env.AUTH_MANUAL_CONNECT
 export const AUTH_MODE: 'manual' | 'headless' =
@@ -538,7 +532,7 @@ async function waitForManualPlatformLoginPlaywright(
   return 'timeout'
 }
 
-async function runManualConnectLinkedInFirefox(): Promise<{ ok: boolean; username?: string; error?: string }> {
+async function runManualConnectLinkedInFirefox(userId: string): Promise<{ ok: boolean; username?: string; error?: string }> {
   const username = 'manual-linkedin'
   let page: import('playwright').Page | null = null
   try {
@@ -560,7 +554,7 @@ async function runManualConnectLinkedInFirefox(): Promise<{ ok: boolean; usernam
 
     const raw = await page.context().cookies(['https://www.linkedin.com'])
     const cookies = playwrightCookiesToProtocol(raw)
-    saveSession('linkedin', { cookies, loggedInAt: new Date(), username })
+    saveSession(userId, 'linkedin', { cookies, loggedInAt: new Date(), username })
     return { ok: true, username }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Login failed' }
@@ -574,6 +568,7 @@ async function runManualConnect(
   setupPage: (page: Page) => Promise<void>,
   waitOpts: { label: string; loginIndicators: string[]; requiredCookieNames?: string[] },
   username: string,
+  userId: string,
 ): Promise<{ ok: boolean; username?: string; error?: string }> {
   let page: Page | null = null
   try {
@@ -585,7 +580,7 @@ async function runManualConnect(
     if (outcome === 'timeout') return { ok: false, error: `Timed out waiting for manual ${waitOpts.label} login.` }
 
     const cookies = await page.cookies() as unknown as Protocol.Network.CookieParam[]
-    saveSession(platform, { cookies, loggedInAt: new Date(), username })
+    saveSession(userId, platform, { cookies, loggedInAt: new Date(), username })
     return { ok: true, username }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Login failed' }
@@ -594,7 +589,7 @@ async function runManualConnect(
   }
 }
 
-async function connectStepStoneHeadless(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
+async function connectStepStoneHeadless(email: string, password: string, userId: string): Promise<{ ok: boolean; error?: string }> {
   let page: Page | null = null
   try {
     page = await getBrowserPage(false, { showMouseOverlay: false, reuseBlankPage: true })
@@ -631,7 +626,7 @@ async function connectStepStoneHeadless(email: string, password: string): Promis
       return { ok: false, error: 'StepStone login failed. Check your credentials and try again.' }
     }
 
-    saveSession('stepstone', { cookies, loggedInAt: new Date(), username: email })
+    saveSession(userId, 'stepstone', { cookies, loggedInAt: new Date(), username: email })
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'StepStone login failed' }
@@ -640,7 +635,52 @@ async function connectStepStoneHeadless(email: string, password: string): Promis
   }
 }
 
-async function connectXingHeadless(email: string, password: string): Promise<{ ok: boolean; error?: string }> {
+async function connectLinkedInHeadless(email: string, password: string, userId: string): Promise<{ ok: boolean; error?: string }> {
+  let page: Page | null = null
+  try {
+    page = await getBrowserPage(false, { showMouseOverlay: false, reuseBlankPage: true })
+    await page.goto('https://www.linkedin.com/login', { waitUntil: 'domcontentloaded', timeout: 35_000 })
+    await sleep(400)
+
+    const filledEmail = await typeIntoFirstAvailableSelector(page, [
+      '#username',
+      'input[name="session_key"]',
+      'input[type="email"]',
+    ], email)
+    const filledPassword = await typeIntoFirstAvailableSelector(page, [
+      '#password',
+      'input[name="session_password"]',
+      'input[type="password"]',
+    ], password)
+    if (!filledEmail || !filledPassword) {
+      return { ok: false, error: 'Could not find LinkedIn login fields. Please try again.' }
+    }
+
+    await submitLoginForm(page, 'linkedin', [
+      'button[type="submit"]',
+      'button[data-id="sign-in-form__submit-btn"]',
+      'button.sign-in-form__submit-btn--full-width',
+    ], ['sign in', 'login', 'log in', 'anmelden'])
+
+    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => undefined)
+    await sleep(2200)
+
+    const cookies = await page.cookies('https://www.linkedin.com') as unknown as Protocol.Network.CookieParam[]
+    const currentUrl = page.url().toLowerCase()
+    const hasLiAt = cookies.some((c) => c.name === 'li_at')
+    if (!hasLiAt || currentUrl.includes('/login') || currentUrl.includes('/checkpoint') || currentUrl.includes('/challenge')) {
+      return { ok: false, error: 'LinkedIn login failed. Check your credentials and try again.' }
+    }
+    saveSession(userId, 'linkedin', { cookies, loggedInAt: new Date(), username: email })
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'LinkedIn login failed' }
+  } finally {
+    if (page) await page.close().catch(() => undefined)
+  }
+}
+
+async function connectXingHeadless(email: string, password: string, userId: string): Promise<{ ok: boolean; error?: string }> {
   let page: Page | null = null
   try {
     page = await getBrowserPage(false, { showMouseOverlay: false, reuseBlankPage: true })
@@ -694,7 +734,7 @@ async function connectXingHeadless(email: string, password: string): Promise<{ o
       return { ok: false, error: 'Xing login failed. Check your credentials and try again.' }
     }
 
-    saveSession('xing', { cookies, loggedInAt: new Date(), username: email })
+    saveSession(userId, 'xing', { cookies, loggedInAt: new Date(), username: email })
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Xing login failed' }
@@ -703,141 +743,45 @@ async function connectXingHeadless(email: string, password: string): Promise<{ o
   }
 }
 
-// Status - which platforms have an active session
-router.get('/status', (_req: Request, res: Response) => {
-  res.json(allSessions())
+// Status - which platforms have an active session for this user
+router.get('/status', (req: Request, res: Response) => {
+  const userId = getUserId(req)
+  res.json(sessionsForUser(userId))
 })
 
 // Disconnect
 router.post('/:platform/disconnect', async (req: Request, res: Response) => {
+  const userId = getUserId(req)
   const platform = String(req.params.platform)
-  clearSession(platform)
+  clearSession(userId, platform)
   if (platform === 'linkedin') {
     await closeLinkedInFirefoxBrowser().catch(() => undefined)
   }
   res.json({ ok: true })
 })
 
-// Download Python capture script
-router.get('/linkedin/capture-script', (_req: Request, res: Response) => {
-  const scriptPath = path.join(__dirname, '..', '..', 'scripts', 'linkedin_capture.py')
-  if (!fs.existsSync(scriptPath)) {
-    res.status(404).json({ error: 'Script not found' })
-    return
-  }
-  const content = fs.readFileSync(scriptPath)
-  res.setHeader('Content-Type', 'text/x-python')
-  res.setHeader('Content-Disposition', 'attachment; filename="linkedin_capture.py"')
-  res.setHeader('Content-Length', content.length)
-  res.end(content)
-})
-
-// Import session — called by the local capture script
-router.post('/linkedin/import-session', async (req: Request, res: Response) => {
-  const { liAt, cookies, username } = req.body as { liAt?: unknown; cookies?: unknown; username?: unknown }
-
-  const uname = typeof username === 'string' ? username.trim() : 'linkedin-user'
-
-  // New format: full cookie jar sent by the Python script
-  let sessionCookies: LinkedInCookieEntry[] | undefined
-  let token = ''
-
-  if (Array.isArray(cookies) && cookies.length > 0) {
-    sessionCookies = (cookies as Array<Record<string, unknown>>).map((c) => ({
-      name:     String(c.name ?? ''),
-      value:    String(c.value ?? ''),
-      domain:   c.domain   ? String(c.domain)  : undefined,
-      path:     c.path     ? String(c.path)    : undefined,
-      secure:   Boolean(c.secure),
-      httpOnly: Boolean(c.httpOnly),
-      expiry:   typeof c.expiry === 'number' ? c.expiry : undefined,
-    }))
-    const liAtEntry = sessionCookies.find((c) => c.name === 'li_at')
-    token = liAtEntry?.value ?? ''
-  } else {
-    // Legacy: script sent only liAt
-    token = typeof liAt === 'string' ? liAt.trim() : ''
-  }
-
-  if (!token) {
-    res.json({ ok: false, error: 'li_at cookie not found in the captured session.' })
-    return
-  }
-
-  if (Array.isArray(sessionCookies) && sessionCookies.length > 0) {
-    console.log(`[auth/linkedin] import: using li_at only (ignored ${sessionCookies.length} capture-browser cookies; not replayed in Puppeteer)`)
-  }
-
-  try {
-    await materializeLinkedInSessionFromLiAt(token, uname)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.error('[auth/linkedin] materialize failed:', msg)
-    res.json({ ok: false, error: msg })
-    return
-  }
-
-  res.json({ ok: true })
-})
-
-// Connect - LinkedIn
-// In headless mode: reads data/linkedin-session.json, validates token, loads into memory.
-// In manual mode: opens a visible browser window for manual login.
-router.post('/linkedin/connect', async (_req: Request, res: Response) => {
+router.post('/linkedin/connect', async (req: Request<unknown, unknown, ConnectBody>, res: Response) => {
   if (activeConnectLocks.has('linkedin')) {
     res.json({ ok: false, error: 'LinkedIn connection is already in progress. Please wait.' })
     return
   }
   activeConnectLocks.add('linkedin')
+  const userId = getUserId(req)
 
   try {
-    // ── Manual mode (dev only) ─────────────────────────────────────────────────
+    const creds = parseCredentials(req.body)
+    if (creds) {
+      const result = await connectLinkedInHeadless(creds.email, creds.password, userId)
+      res.json(result.ok ? { ok: true, username: creds.email } : result)
+      return
+    }
+
     if (AUTH_MODE === 'manual') {
-      const result = await runManualConnectLinkedInFirefox()
+      const result = await runManualConnectLinkedInFirefox(userId)
       res.json(result)
       return
     }
-
-    // ── Headless mode: read session file ───────────────────────────────────────
-    const fileSession = readLinkedInSessionFile()
-
-    if (!fileSession) {
-      res.json({
-        ok: false,
-        noSession: true,
-        error: 'No LinkedIn session found. Run the capture script locally first.',
-      })
-      return
-    }
-
-    if (isLinkedInSessionExpired(fileSession)) {
-      res.json({
-        ok: false,
-        expired: true,
-        error: 'LinkedIn session has expired (>330 days). Run the capture script again.',
-      })
-      return
-    }
-
-    try {
-      if (sessionNeedsPuppeteerMaterialization(fileSession)) {
-        await materializeLinkedInSessionFromLiAt(fileSession.liAt, fileSession.username)
-      } else {
-        const puppeteerCookies = sessionFileToPuppeteerCookies(fileSession)
-        saveSession('linkedin', {
-          cookies: puppeteerCookies,
-          loggedInAt: new Date(fileSession.capturedAt),
-          username: fileSession.username,
-        })
-        console.log(`[auth/linkedin] session loaded from file (${puppeteerCookies.length} cookies, user: ${fileSession.username})`)
-      }
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      console.error('[auth/linkedin] connect (headless) failed:', msg)
-      res.json({ ok: false, error: msg })
-      return
-    }
-    res.json({ ok: true, username: fileSession.username })
+    res.json({ ok: false, error: 'Email and password are required.' })
   } finally {
     activeConnectLocks.delete('linkedin')
   }
@@ -850,6 +794,7 @@ router.post('/stepstone/connect', async (req: Request<unknown, unknown, ConnectB
     return
   }
   activeConnectLocks.add('stepstone')
+  const userId = getUserId(req)
 
   try {
     if (AUTH_MODE === 'manual') {
@@ -868,6 +813,7 @@ router.post('/stepstone/connect', async (req: Request<unknown, unknown, ConnectB
           loginIndicators: ['kandidaten/login', '/login'],
         },
         'manual-stepstone',
+        userId,
       )
       res.json(result)
       return
@@ -879,7 +825,7 @@ router.post('/stepstone/connect', async (req: Request<unknown, unknown, ConnectB
       return
     }
 
-    const result = await connectStepStoneHeadless(creds.email, creds.password)
+    const result = await connectStepStoneHeadless(creds.email, creds.password, userId)
     res.json(result.ok ? { ok: true, username: creds.email } : result)
   } finally {
     activeConnectLocks.delete('stepstone')
@@ -893,6 +839,7 @@ router.post('/xing/connect', async (req: Request<unknown, unknown, ConnectBody>,
     return
   }
   activeConnectLocks.add('xing')
+  const userId = getUserId(req)
 
   try {
     if (AUTH_MODE === 'manual') {
@@ -910,6 +857,7 @@ router.post('/xing/connect', async (req: Request<unknown, unknown, ConnectBody>,
           loginIndicators: ['login.xing.com', '/login'],
         },
         'manual-xing',
+        userId,
       )
       res.json(result)
       return
@@ -921,7 +869,7 @@ router.post('/xing/connect', async (req: Request<unknown, unknown, ConnectBody>,
       return
     }
 
-    const result = await connectXingHeadless(creds.email, creds.password)
+    const result = await connectXingHeadless(creds.email, creds.password, userId)
     res.json(result.ok ? { ok: true, username: creds.email } : result)
   } finally {
     activeConnectLocks.delete('xing')

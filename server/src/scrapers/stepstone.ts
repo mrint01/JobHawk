@@ -140,8 +140,9 @@ export async function scrapeStepStone(
   jobTitle: string,
   location: string,
   onProgress: ProgressCallback,
+  userId = 'admin',
 ): Promise<ScrapedJob[]> {
-  if (!getSession('stepstone')) {
+  if (!getSession(userId, 'stepstone')) {
     onProgress({
       type: 'error',
       platform: 'stepstone',
@@ -156,7 +157,7 @@ export async function scrapeStepStone(
   try {
     page = await getBrowserPage()
 
-    const session = getSession('stepstone')
+    const session = getSession(userId, 'stepstone')
     if (session?.cookies.length) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await page.setCookie(...(session.cookies as any[]))

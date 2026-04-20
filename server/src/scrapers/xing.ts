@@ -46,8 +46,8 @@ function parseXingDate(text: string): string {
 }
 
 /** Convert stored Puppeteer cookies → axios Cookie header string */
-function cookieHeader(platform: string): string {
-  const session = getSession(platform)
+function cookieHeader(userId: string, platform: string): string {
+  const session = getSession(userId, platform)
   if (!session) return ''
   return session.cookies.map((c) => `${c.name}=${c.value}`).join('; ')
 }
@@ -116,6 +116,7 @@ async function scrapeXingBrowser(
   jobTitle: string,
   location: string,
   onProgress: ProgressCallback,
+  userId = 'admin',
 ): Promise<ScrapedJob[]> {
   let page = null
   try {
@@ -123,7 +124,7 @@ async function scrapeXingBrowser(
     // and often yields 0 cards, especially when other platforms use the shared browser in parallel.
     page = await getBrowserPage(false)
 
-    const session = getSession('xing')
+    const session = getSession(userId, 'xing')
     if (session?.cookies.length) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       await page.setCookie(...(session.cookies as any[]))
@@ -221,8 +222,9 @@ export async function scrapeXing(
   jobTitle: string,
   location: string,
   onProgress: ProgressCallback,
+  userId = 'admin',
 ): Promise<ScrapedJob[]> {
-  if (!getSession('xing')) {
+  if (!getSession(userId, 'xing')) {
     onProgress({
       type: 'error',
       platform: 'xing',
@@ -236,7 +238,7 @@ export async function scrapeXing(
   // When LinkedIn + StepStone run together, the shared scrape browser is busy; stagger API/browser work slightly.
   await sleep(2500)
 
-  const cookieStr = cookieHeader('xing')
+  const cookieStr = cookieHeader(userId, 'xing')
   const apiResults = await scrapeXingAxios(jobTitle, location, cookieStr)
   if (apiResults !== null) {
     const hasReliableMeta = apiResults.some((j) => Boolean(j.postedDate) && Boolean(j.jobType))
@@ -252,7 +254,7 @@ export async function scrapeXing(
   }
 
   onProgress({ type: 'progress', platform: 'xing', progress: 40 })
-  const results = await scrapeXingBrowser(jobTitle, location, onProgress)
+  const results = await scrapeXingBrowser(jobTitle, location, onProgress, userId)
   onProgress({ type: 'progress', platform: 'xing', progress: 100 })
   return limitScrapedJobs(results)
 }

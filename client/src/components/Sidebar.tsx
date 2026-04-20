@@ -1,9 +1,9 @@
-import { Briefcase, LayoutDashboard, Settings, LogOut, X } from 'lucide-react'
+import { Briefcase, LayoutDashboard, Settings, LogOut, X, BarChart3 } from 'lucide-react'
 import type { ActivePage } from '../context/AppContext'
 import { useApp } from '../context/AppContext'
 
 export default function Sidebar() {
-  const { activePage, setActivePage, logout, sidebarOpen, setSidebarOpen } = useApp()
+  const { activePage, setActivePage, logout, sidebarOpen, setSidebarOpen, appState } = useApp()
 
   function navigate(page: ActivePage) {
     setActivePage(page)
@@ -52,11 +52,11 @@ export default function Sidebar() {
         <div className="px-4 py-4 border-b border-gray-100 dark:border-slate-700/60 flex-shrink-0">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-violet-600 flex items-center justify-center text-white font-bold text-sm flex-shrink-0 shadow">
-              AD
+              {(appState.username || 'U').slice(0, 2).toUpperCase()}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">admin</p>
-              <p className="text-xs text-gray-500 dark:text-slate-400 truncate">Administrator</p>
+              <p className="text-sm font-semibold text-gray-900 dark:text-white truncate">{appState.username || 'User'}</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 truncate">{appState.role === 'admin' ? 'Administrator' : 'User'}</p>
             </div>
           </div>
         </div>
@@ -71,6 +71,13 @@ export default function Sidebar() {
             Dashboard
           </button>
 
+          <button
+            onClick={() => navigate('analytics')}
+            className={`sidebar-item w-full ${activePage === 'analytics' ? 'sidebar-item-active' : ''}`}
+          >
+            <BarChart3 className="w-4 h-4 flex-shrink-0" />
+            Analytics
+          </button>
           <button
             onClick={() => navigate('settings')}
             className={`sidebar-item w-full ${activePage === 'settings' ? 'sidebar-item-active' : ''}`}

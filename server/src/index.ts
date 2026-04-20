@@ -6,7 +6,8 @@ import path from 'path'
 import scrapeRouter from './routes/scrape'
 import authRouter, { AUTH_MODE } from './routes/auth'
 import jobsRouter from './routes/jobs'
-import { allSessions, saveSession, hasSession, clearSession } from './utils/sessions'
+import usersRouter from './routes/users'
+import { sessionsForUser, saveSession, hasSession, clearSession, loadSessionsFromDisk } from './utils/sessions'
 import { closeBrowser } from './utils/browser'
 import { closeLinkedInFirefoxBrowser } from './utils/linkedinFirefox'
 import { materializeLinkedInSessionFromLiAt } from './utils/linkedinBootstrap'
@@ -40,12 +41,13 @@ app.use(express.urlencoded({ extended: true }))
 
 app.get('/api/ping', (_req, res) => { res.json({ pong: true, v: 2 }) })
 
-// Health check — includes which platforms have active sessions
-app.get('/api/health', (_req, res) => {
+// Health check — returns connected platforms for the requesting user
+app.get('/api/health', (req, res) => {
+  const userId = String(req.header('x-user-id') || 'admin')
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
-    connectedPlatforms: Object.keys(allSessions()),
+    connectedPlatforms: Object.keys(sessionsForUser(userId)),
     authMode: AUTH_MODE,
   })
 })
@@ -53,6 +55,7 @@ app.get('/api/health', (_req, res) => {
 app.use('/api/auth', authRouter)
 app.use('/api/scrape', scrapeRouter)
 app.use('/api/jobs', jobsRouter)
+app.use('/api/users', usersRouter)
 
 // ── Debug: view Puppeteer screenshots ────────────────────────────────────────
 app.get('/api/debug/screenshots', (req, res) => {
@@ -85,12 +88,12 @@ app.get('/api/debug/screenshot/:filename', (req, res) => {
   }
 })
 
-// ── LinkedIn session watchdog (every 30 min) ──────────────────────────────────
+// ── LinkedIn session watchdog (every 30 min) — monitors admin's preloaded session ──
 setInterval(() => {
-  if (!hasSession('linkedin')) return
+  if (!hasSession('admin', 'linkedin')) return
   const file = readLinkedInSessionFile()
   if (!file || isLinkedInSessionExpired(file)) {
-    clearSession('linkedin')
+    clearSession('admin', 'linkedin')
     console.log('[session-monitor] LinkedIn session cleared — file missing or expired')
   }
 }, 30 * 60 * 1000)
@@ -105,12 +108,12 @@ async function preloadLinkedInSessionFromDisk(): Promise<void> {
 
   try {
     if (sessionNeedsPuppeteerMaterialization(linkedInFile)) {
-      await materializeLinkedInSessionFromLiAt(linkedInFile.liAt, linkedInFile.username)
+      await materializeLinkedInSessionFromLiAt(linkedInFile.liAt, linkedInFile.username, 'admin')
       console.log(`✅  LinkedIn session materialized on startup (user: ${linkedInFile.username})`)
       return
     }
     const puppeteerCookies = sessionFileToPuppeteerCookies(linkedInFile)
-    saveSession('linkedin', {
+    saveSession('admin', 'linkedin', {
       cookies: puppeteerCookies,
       loggedInAt: new Date(linkedInFile.capturedAt),
       username: linkedInFile.username,
@@ -124,7 +127,7 @@ async function preloadLinkedInSessionFromDisk(): Promise<void> {
       if (!again) return
       const fallback = sessionFileToPuppeteerCookies(again)
       if (fallback.length > 0) {
-        saveSession('linkedin', {
+        saveSession('admin', 'linkedin', {
           cookies: fallback,
           loggedInAt: new Date(again.capturedAt),
           username: again.username,
@@ -138,6 +141,7 @@ async function preloadLinkedInSessionFromDisk(): Promise<void> {
 }
 
 // ── Start ─────────────────────────────────────────────────────────────────────
+loadSessionsFromDisk()
 void preloadLinkedInSessionFromDisk().finally(() => {
   const server = app.listen(PORT, () => {
     console.log(`✅  JobHawk API  →  http://localhost:${PORT}`)

@@ -28,7 +28,7 @@ function isLoginOrCheckpointUrl(url: string): boolean {
 /**
  * Visit /feed with only li_at so LinkedIn issues companion cookies for this Firefox profile.
  */
-export async function materializeLinkedInSessionFromLiAt(liAt: string, username: string): Promise<void> {
+export async function materializeLinkedInSessionFromLiAt(liAt: string, username: string, userId = 'admin'): Promise<void> {
   const token = liAt.trim()
   if (!token) throw new Error('li_at is empty')
 
@@ -79,7 +79,7 @@ export async function materializeLinkedInSessionFromLiAt(liAt: string, username:
     }
     writeLinkedInSessionFile(filePayload)
 
-    saveSession('linkedin', {
+    saveSession(userId, 'linkedin', {
       cookies: sessionFileToPuppeteerCookies(filePayload),
       loggedInAt: new Date(),
       username,

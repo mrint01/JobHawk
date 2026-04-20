@@ -161,13 +161,13 @@ async function isLinkedInRateLimitedPage(page: Page): Promise<boolean> {
   )
 }
 
-async function persistLinkedInSessionFromPage(page: Page, username: string): Promise<void> {
+async function persistLinkedInSessionFromPage(page: Page, username: string, userId: string): Promise<void> {
   try {
     const raw = await page.context().cookies(['https://www.linkedin.com'])
     const sanitized = playwrightCookiesToProtocol(raw)
     const liAt = sanitized.find((c) => c.name === 'li_at' && c.value.length > 0)?.value
     if (!liAt) return
-    saveSession('linkedin', { cookies: sanitized, loggedInAt: new Date(), username })
+    saveSession(userId, 'linkedin', { cookies: sanitized, loggedInAt: new Date(), username })
     writeLinkedInSessionFile({
       liAt,
       capturedAt: new Date().toISOString(),
@@ -498,8 +498,9 @@ export async function scrapeLinkedIn(
   jobTitle: string,
   location: string,
   onProgress: ProgressCallback,
+  userId = 'admin',
 ): Promise<ScrapedJob[]> {
-  const session = getSession('linkedin')
+  const session = getSession(userId, 'linkedin')
   if (!session) {
     onProgress({ type: 'error', platform: 'linkedin', error: 'LinkedIn is not connected. Go to Settings → connect.' })
     return []
@@ -512,7 +513,7 @@ export async function scrapeLinkedIn(
     const replayCookies = sanitizeLinkedInCookiesForReplay(session.cookies as Protocol.Network.CookieParam[])
     const hasLiAtInStore = replayCookies.some((c) => c.name === 'li_at' && c.value.length > 0)
     if (!hasLiAtInStore) {
-      clearSession('linkedin')
+      clearSession(userId, 'linkedin')
       onProgress({
         type: 'error',
         platform: 'linkedin',
@@ -565,7 +566,7 @@ export async function scrapeLinkedIn(
       return []
     }
     if (isBlockedLinkedInUrl(currentUrl)) {
-      clearSession('linkedin')
+      clearSession(userId, 'linkedin')
       onProgress({
         type: 'error',
         platform: 'linkedin',
@@ -581,7 +582,7 @@ export async function scrapeLinkedIn(
     for (let i = 0; i < 14; i++) {
       await sleep(1500)
       if (isBlockedLinkedInUrl(page.url())) {
-        clearSession('linkedin')
+        clearSession(userId, 'linkedin')
         onProgress({
           type: 'error',
           platform: 'linkedin',
@@ -658,7 +659,7 @@ export async function scrapeLinkedIn(
         break
       }
       if (isBlockedLinkedInUrl(page.url())) {
-        clearSession('linkedin')
+        clearSession(userId, 'linkedin')
         onProgress({
           type: 'error',
           platform: 'linkedin',
@@ -808,7 +809,7 @@ export async function scrapeLinkedIn(
     }))
     console.log(`[linkedin] normalized postedDate for ${normalized.filter((j) => !!j.postedDate).length}/${normalized.length} jobs`)
 
-    await persistLinkedInSessionFromPage(page, session.username)
+    await persistLinkedInSessionFromPage(page, session.username, userId)
 
     onProgress({ type: 'progress', platform: 'linkedin', progress: 100 })
     return limitScrapedJobs(normalized)
@@ -817,7 +818,7 @@ export async function scrapeLinkedIn(
     console.error('[linkedin] scrape error:', err)
     const msg = err instanceof Error ? err.message : String(err)
     if (isLinkedInRedirectLoopError(msg)) {
-      clearSession('linkedin')
+      clearSession(userId, 'linkedin')
       onProgress({
         type: 'error',
         platform: 'linkedin',

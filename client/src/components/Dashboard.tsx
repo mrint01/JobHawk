@@ -128,7 +128,7 @@ function Pagination({
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { newJobs, appliedJobs, scrapeProgress, isScraping, clearJobs, clearJobOffers } = useApp()
+  const { newJobs, appliedJobs, scrapeProgress, isScraping, clearJobs, clearJobOffers, appState } = useApp()
   const [activeTab, setActiveTab] = useState<Tab>('offers')
   const [offersPage, setOffersPage] = useState(1)
   const [appliedPage, setAppliedPage] = useState(1)
@@ -141,6 +141,8 @@ export default function Dashboard() {
   const [appliedSortOrder, setAppliedSortOrder] = useState<SortOrder>('date_desc')
   const [appliedDateFrom, setAppliedDateFrom] = useState('')
   const [appliedDateTo, setAppliedDateTo] = useState('')
+
+  const isAdmin = appState.role === 'admin'
 
   const getDateRef = (tab: Tab, job: (typeof newJobs)[number]): number => {
     const raw = tab === 'applied' ? (job.appliedAt ?? job.postedDate) : job.postedDate
@@ -216,38 +218,8 @@ export default function Dashboard() {
         <h1 className="text-xl font-bold text-gray-900 dark:text-white">Job Dashboard</h1>
         <div className="flex items-center gap-3 flex-wrap">
           <ConnectionBar />
-          {/* Clear offers only (keep applied) */}
-          {newJobs.length > 0 && (
-            confirmClearOffers ? (
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-xs text-gray-500 dark:text-slate-400">Remove all open offers?</span>
-                <button
-                  onClick={() => { clearJobOffers(); setConfirmClearOffers(false) }}
-                  className="text-xs px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-medium transition-colors"
-                >
-                  Yes, clear offers
-                </button>
-                <button
-                  onClick={() => setConfirmClearOffers(false)}
-                  className="text-xs px-2.5 py-1 rounded-lg btn-secondary"
-                >
-                  Cancel
-                </button>
-              </div>
-            ) : (
-              <button
-                onClick={() => setConfirmClearOffers(true)}
-                className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg text-amber-700 dark:text-amber-400/90 hover:bg-amber-50 dark:hover:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 transition-all duration-150"
-                title="Remove all jobs in Job Offers only; Applied tab is unchanged"
-                type="button"
-              >
-                <ListX className="w-3.5 h-3.5" />
-                Clear offers
-              </button>
-            )
-          )}
-          {/* Clear all data — debug helper */}
-          {(newJobs.length > 0 || appliedJobs.length > 0) && (
+          {/* Clear all data — admin only */}
+          {isAdmin && (newJobs.length > 0 || appliedJobs.length > 0) && (
             confirmClear ? (
               <div className="flex items-center gap-1.5">
                 <span className="text-xs text-gray-500 dark:text-slate-400">Delete everything (offers + applied)?</span>
@@ -374,9 +346,40 @@ export default function Dashboard() {
           )}
 
           {activeTab === 'offers' && (
-            <p className="ml-auto text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap">
-              {offersDateRangeLabel}
-            </p>
+            <div className="ml-auto flex items-center gap-3 flex-wrap">
+              <p className="text-xs text-gray-400 dark:text-slate-500 whitespace-nowrap">
+                {offersDateRangeLabel}
+              </p>
+              {newJobs.length > 0 && (
+                confirmClearOffers ? (
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    <span className="text-xs text-gray-500 dark:text-slate-400">Remove all open offers?</span>
+                    <button
+                      onClick={() => { clearJobOffers(); setConfirmClearOffers(false) }}
+                      className="text-xs px-2.5 py-1 rounded-lg bg-amber-500 hover:bg-amber-600 text-white font-medium transition-colors"
+                    >
+                      Yes, clear offers
+                    </button>
+                    <button
+                      onClick={() => setConfirmClearOffers(false)}
+                      className="text-xs px-2.5 py-1 rounded-lg btn-secondary"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConfirmClearOffers(true)}
+                    className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg text-amber-700 dark:text-amber-400/90 hover:bg-amber-50 dark:hover:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 transition-all duration-150"
+                    title="Remove all jobs in Job Offers only; Applied tab is unchanged"
+                    type="button"
+                  >
+                    <ListX className="w-3.5 h-3.5" />
+                    Clear offers
+                  </button>
+                )
+              )}
+            </div>
           )}
         </div>
 

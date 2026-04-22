@@ -78,9 +78,25 @@ export default function AnalyticsPage() {
   const last30Count = sumLastDays(30)
   const allTimeCount = allTimeSeries.reduce((sum, item) => sum + item.appliedCount, 0)
 
-  const chartData = useMemo(() =>
-    series.map((item) => ({ date: item.date, count: item.appliedCount, label: item.date.slice(5) }))
-  , [series])
+  const chartData = useMemo(() => {
+    const fromDate = new Date(from)
+    fromDate.setHours(0, 0, 0, 0)
+    const toDate = new Date()
+    toDate.setHours(0, 0, 0, 0)
+    const dataMap = new Map(series.map((item) => [item.date, item.appliedCount]))
+    const dates: { date: string; count: number; label: string }[] = []
+    const cursor = new Date(fromDate)
+    while (cursor <= toDate) {
+      const key = cursor.toISOString().slice(0, 10)
+      dates.push({
+        date: key,
+        count: dataMap.get(key) ?? 0,
+        label: cursor.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+      })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+    return dates
+  }, [series, from])
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
@@ -155,21 +171,22 @@ export default function AnalyticsPage() {
                   tick={{ fontSize: 10, fill: '#94a3b8' }}
                   axisLine={false}
                   tickLine={false}
-                  interval="preserveStartEnd"
+                  interval={Math.max(0, Math.floor((chartData.length - 1) / 9))}
                 />
                 <YAxis
                   allowDecimals={false}
+                  domain={[0, 'auto']}
                   tick={{ fontSize: 10, fill: '#94a3b8' }}
                   axisLine={false}
                   tickLine={false}
-                  width={32}
+                  width={40}
                 />
                 <Tooltip
                   contentStyle={{ background: '#1e293b', border: '1px solid #334155', borderRadius: 8, fontSize: 12 }}
                   labelStyle={{ color: '#94a3b8' }}
                   itemStyle={{ color: '#a5b4fc' }}
-                  formatter={(v) => [v, 'Applied']}
-                  labelFormatter={(label) => `Date: ${label}`}
+                  formatter={(v) => [v, 'Applications']}
+                  labelFormatter={(label) => label}
                 />
                 <Area
                   type="monotone"

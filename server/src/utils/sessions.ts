@@ -1,12 +1,5 @@
-/**
- * Per-user, disk-persisted session store for platform cookies.
- *
- * Sessions are keyed by `${userId}:${platform}` in memory and persisted
- * to server/data/sessions.json so connections survive server restarts.
- */
-import fs from 'fs'
-import path from 'path'
 import type { Protocol } from 'puppeteer'
+import { supabase } from './supabase'
 
 export type PlatformSession = {
   cookies: Protocol.Network.CookieParam[]
@@ -14,69 +7,42 @@ export type PlatformSession = {
   username: string
 }
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data')
-const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json')
-
-// In-memory store keyed by `${userId}:${platform}`
+// In-memory cache keyed by `${userId}:${platform}` — keeps scraper reads synchronous
 const store = new Map<string, PlatformSession>()
 
 function storeKey(userId: string, platform: string): string {
   return `${userId}:${platform}`
 }
 
-function ensureDir(): void {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
-}
-
-type SerializedSessions = Record<string, Record<string, {
-  cookies: Protocol.Network.CookieParam[]
-  loggedInAt: string
-  username: string
-}>>
-
-function persistToDisk(): void {
-  try {
-    ensureDir()
-    const data: SerializedSessions = {}
-    for (const [k, session] of store.entries()) {
-      const colonIdx = k.indexOf(':')
-      const userId = k.slice(0, colonIdx)
-      const platform = k.slice(colonIdx + 1)
-      if (!data[userId]) data[userId] = {}
-      data[userId][platform] = {
-        cookies: session.cookies,
-        loggedInAt: session.loggedInAt.toISOString(),
-        username: session.username,
-      }
-    }
-    fs.writeFileSync(SESSIONS_FILE, JSON.stringify(data, null, 2), 'utf-8')
-  } catch {
-    // non-fatal
+export async function loadSessionsFromDB(): Promise<void> {
+  const { data, error } = await supabase.from('platform_sessions').select('*')
+  if (error) {
+    console.error('[sessions] Failed to load from DB:', error.message)
+    return
   }
-}
-
-export function loadSessionsFromDisk(): void {
-  try {
-    if (!fs.existsSync(SESSIONS_FILE)) return
-    const data = JSON.parse(fs.readFileSync(SESSIONS_FILE, 'utf-8')) as SerializedSessions
-    for (const [userId, platforms] of Object.entries(data)) {
-      for (const [platform, s] of Object.entries(platforms)) {
-        store.set(storeKey(userId, platform), {
-          cookies: s.cookies,
-          loggedInAt: new Date(s.loggedInAt),
-          username: s.username,
-        })
-      }
-    }
-    console.log(`[sessions] loaded ${store.size} session(s) from disk`)
-  } catch {
-    // non-fatal
+  for (const row of data ?? []) {
+    store.set(storeKey(row.user_id, row.platform), {
+      cookies: row.cookies as Protocol.Network.CookieParam[],
+      loggedInAt: new Date(row.logged_in_at),
+      username: row.username,
+    })
   }
+  console.log(`[sessions] loaded ${store.size} session(s) from DB`)
 }
 
-export function saveSession(userId: string, platform: string, session: PlatformSession): void {
+export async function saveSession(userId: string, platform: string, session: PlatformSession): Promise<void> {
   store.set(storeKey(userId, platform), session)
-  persistToDisk()
+  const { error } = await supabase.from('platform_sessions').upsert(
+    {
+      user_id: userId,
+      platform,
+      username: session.username,
+      cookies: session.cookies,
+      logged_in_at: session.loggedInAt.toISOString(),
+    },
+    { onConflict: 'user_id,platform' },
+  )
+  if (error) console.error('[sessions] Failed to save to DB:', error.message)
 }
 
 export function getSession(userId: string, platform: string): PlatformSession | undefined {
@@ -87,12 +53,16 @@ export function hasSession(userId: string, platform: string): boolean {
   return store.has(storeKey(userId, platform))
 }
 
-export function clearSession(userId: string, platform: string): void {
+export async function clearSession(userId: string, platform: string): Promise<void> {
   store.delete(storeKey(userId, platform))
-  persistToDisk()
+  const { error } = await supabase
+    .from('platform_sessions')
+    .delete()
+    .eq('user_id', userId)
+    .eq('platform', platform)
+  if (error) console.error('[sessions] Failed to delete from DB:', error.message)
 }
 
-/** Returns connected platforms for a single user. */
 export function sessionsForUser(userId: string): Record<string, { loggedInAt: string; username: string }> {
   const result: Record<string, { loggedInAt: string; username: string }> = {}
   const prefix = `${userId}:`
@@ -104,7 +74,6 @@ export function sessionsForUser(userId: string): Record<string, { loggedInAt: st
   return result
 }
 
-/** Returns all sessions across all users (admin/debug). */
 export function allSessions(): Record<string, { loggedInAt: string; username: string }> {
   const result: Record<string, { loggedInAt: string; username: string }> = {}
   for (const [k, session] of store.entries()) {

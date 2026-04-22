@@ -1,150 +1,119 @@
-/**
- * Server-side job persistence — reads and writes server/data/jobs.json.
- *
- * Synchronous fs calls are intentional: this is a single-process personal
- * app with very infrequent writes, so async complexity would add no value.
- */
-import fs from 'fs'
-import path from 'path'
+import { supabase } from './supabase'
 import type { Job, ScrapedJob } from '../scrapers/types'
-import { readUsers } from './userStore'
 
-const DATA_DIR = path.join(__dirname, '..', '..', 'data')
-const JOBS_FILE = path.join(DATA_DIR, 'jobs.json')
-
-function ensureDir(): void {
-  if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true })
-}
-
-export function readJobs(): Job[] {
-  try {
-    ensureDir()
-    if (!fs.existsSync(JOBS_FILE)) return []
-    const parsed = JSON.parse(fs.readFileSync(JOBS_FILE, 'utf-8')) as Array<Job & { userId?: string }>
-    return parsed.map((j) => ({ ...j, userId: j.userId ?? 'admin' }))
-  } catch {
-    return []
-  }
-}
-
-export function readJobsForUser(userId: string): Job[] {
-  return readJobs().filter((j) => j.userId === userId)
-}
-
-function writeJobs(jobs: Job[]): void {
-  ensureDir()
-  fs.writeFileSync(JOBS_FILE, JSON.stringify(jobs, null, 2), 'utf-8')
-}
-
-/** Strip tracking/session params from job URLs so the same job always maps to the same key. */
 function normalizeUrl(url: string): string {
-  // LinkedIn: /jobs/view/1234567890/?refId=...&trackingId=... → /jobs/view/1234567890/
   const linkedInMatch = url.match(/https:\/\/www\.linkedin\.com\/jobs\/view\/(\d+)/)
   if (linkedInMatch) return `https://www.linkedin.com/jobs/view/${linkedInMatch[1]}/`
-  // Generic: strip query string
   try { return new URL(url).origin + new URL(url).pathname } catch { return url }
 }
 
-/** Merge newly scraped jobs with persisted ones. Existing statuses are preserved. */
-export function mergeJobs(incoming: ScrapedJob[]): Job[] {
-  return mergeJobsForUser('admin', incoming)
+export async function readJobsForUser(userId: string): Promise<Job[]> {
+  const { data } = await supabase
+    .from('jobs')
+    .select('*')
+    .eq('user_id', userId)
+    .order('posted_date', { ascending: false, nullsFirst: false })
+  return (data ?? []).map(dbRowToJob)
 }
 
-export function mergeJobsForUser(userId: string, incoming: ScrapedJob[]): Job[] {
-  const existing = readJobs()
-  const ownJobs = existing.filter((j) => j.userId === userId)
-  const foreignJobs = existing.filter((j) => j.userId !== userId)
-  // Use normalized URL as the dedup key per user
-  const map = new Map(ownJobs.map((j) => [normalizeUrl(j.url), j]))
+function safeDate(val: string | undefined | null): string | null {
+  if (!val) return null
+  const d = new Date(val)
+  return Number.isNaN(d.getTime()) ? null : d.toISOString()
+}
 
-  for (const job of incoming) {
+export async function mergeJobsForUser(userId: string, incoming: ScrapedJob[]): Promise<Job[]> {
+  const { data: existing } = await supabase.from('jobs').select('*').eq('user_id', userId)
+  const existingJobs = (existing ?? []).map(dbRowToJob)
+  const map = new Map(existingJobs.map((j) => [normalizeUrl(j.url), j]))
+
+  // Deduplicate incoming by normalized URL — scrapers sometimes return the same job twice
+  const deduped = Array.from(
+    new Map(incoming.map((j) => [normalizeUrl(j.url), j])).values()
+  )
+
+  const upserts: Record<string, unknown>[] = []
+  for (const job of deduped) {
     const key = normalizeUrl(job.url)
     const existingJob = map.get(key)
     if (!existingJob) {
-      map.set(key, {
-        ...job,
-        url: key,                            // store the clean URL
-        scrapedAt: new Date().toISOString(),
+      upserts.push({
+        user_id: userId,
+        title: job.title,
+        company: job.company,
+        location: job.location || null,
+        platform: job.platform,
+        url: key,
+        posted_date: safeDate(job.postedDate),
+        description: job.description || null,
+        salary: job.salary || null,
+        job_type: job.jobType || null,
+        scraped_at: new Date().toISOString(),
         status: 'new',
-        userId,
+        applied_at: null,
       })
     } else {
-      // Refresh scrape-derived fields (title/company/location/postedDate/platform)
-      // while preserving user workflow fields (status/appliedAt/id).
-      map.set(key, {
-        ...existingJob,
-        ...job,
+      upserts.push({
         id: existingJob.id,
+        user_id: userId,
+        title: job.title,
+        company: job.company,
+        location: job.location || null,
+        platform: job.platform,
         url: key,
+        posted_date: safeDate(job.postedDate),
+        description: job.description || null,
+        salary: job.salary || null,
+        job_type: job.jobType || null,
+        scraped_at: new Date().toISOString(),
         status: existingJob.status,
-        appliedAt: existingJob.appliedAt,
-        scrapedAt: new Date().toISOString(),
-        userId,
+        applied_at: existingJob.appliedAt || null,
       })
     }
   }
 
-  const merged = Array.from(map.values()).sort(
-    (a, b) => new Date(b.postedDate).getTime() - new Date(a.postedDate).getTime(),
-  )
-  const all = [...foreignJobs, ...merged].sort(
-    (a, b) => new Date(b.postedDate || b.scrapedAt).getTime() - new Date(a.postedDate || a.scrapedAt).getTime(),
-  )
-  writeJobs(all)
-  return merged
+  if (upserts.length > 0) {
+    const { error } = await supabase.from('jobs').upsert(upserts, { onConflict: 'user_id,url' })
+    if (error) {
+      console.error('[jobStore] upsert failed:', error.message, error.details)
+      throw new Error(`Failed to save jobs: ${error.message}`)
+    }
+    console.log(`[jobStore] saved ${upserts.length} jobs for user ${userId}`)
+  }
+
+  return readJobsForUser(userId)
 }
 
-export function markApplied(id: string): Job[] {
-  return markAppliedForUser('admin', id)
+export async function markAppliedForUser(userId: string, id: string): Promise<Job[]> {
+  await supabase
+    .from('jobs')
+    .update({ status: 'applied', applied_at: new Date().toISOString() })
+    .eq('id', id)
+    .eq('user_id', userId)
+  return readJobsForUser(userId)
 }
 
-export function markAppliedForUser(userId: string, id: string): Job[] {
-  const jobs = readJobs().map((j) =>
-    j.id === id && j.userId === userId ? { ...j, status: 'applied' as const, appliedAt: new Date().toISOString() } : j,
-  )
-  writeJobs(jobs)
-  return jobs.filter((j) => j.userId === userId)
+export async function markUnappliedForUser(userId: string, id: string): Promise<Job[]> {
+  await supabase
+    .from('jobs')
+    .update({ status: 'new', applied_at: null })
+    .eq('id', id)
+    .eq('user_id', userId)
+  return readJobsForUser(userId)
 }
 
-export function markUnapplied(id: string): Job[] {
-  return markUnappliedForUser('admin', id)
+export async function clearJobsForUser(userId: string): Promise<void> {
+  await supabase.from('jobs').delete().eq('user_id', userId)
 }
 
-export function markUnappliedForUser(userId: string, id: string): Job[] {
-  const jobs = readJobs().map((j) => {
-    if (j.id !== id || j.userId !== userId) return j
-    const { appliedAt: _removed, ...rest } = j
-    return { ...rest, status: 'new' as const }
-  })
-  writeJobs(jobs)
-  return jobs.filter((j) => j.userId === userId)
+export async function clearNewJobOffersForUser(userId: string): Promise<Job[]> {
+  await supabase.from('jobs').delete().eq('user_id', userId).eq('status', 'new')
+  return readJobsForUser(userId)
 }
 
-export function clearJobs(): void {
-  writeJobs([])
-}
-
-/** Remove only open offers (status `new`); keeps applied jobs. */
-export function clearNewJobOffers(): Job[] {
-  return clearNewJobOffersForUser('admin')
-}
-
-export function clearNewJobOffersForUser(userId: string): Job[] {
-  const all = readJobs()
-  const kept = all.filter((j) => j.userId !== userId || j.status !== 'new')
-  writeJobs(kept)
-  return kept.filter((j) => j.userId === userId)
-}
-
-export function clearJobsForUser(userId: string): void {
-  const kept = readJobs().filter((j) => j.userId !== userId)
-  writeJobs(kept)
-}
-
-export function deleteJobForUser(userId: string, id: string): Job[] {
-  const kept = readJobs().filter((j) => !(j.userId === userId && j.id === id))
-  writeJobs(kept)
-  return kept.filter((j) => j.userId === userId)
+export async function deleteJobForUser(userId: string, id: string): Promise<Job[]> {
+  await supabase.from('jobs').delete().eq('id', id).eq('user_id', userId)
+  return readJobsForUser(userId)
 }
 
 export interface AnalyticsBucket {
@@ -152,46 +121,63 @@ export interface AnalyticsBucket {
   appliedCount: number
 }
 
-export function analyticsByUser(userId: string, from: Date): AnalyticsBucket[] {
-  const buckets = new Map<string, number>()
-  for (const job of readJobsForUser(userId)) {
-    if (job.status !== 'applied' || !job.appliedAt) continue
-    const ts = new Date(job.appliedAt)
-    if (Number.isNaN(ts.getTime()) || ts < from) continue
-    const day = ts.toISOString().slice(0, 10)
-    buckets.set(day, (buckets.get(day) ?? 0) + 1)
-  }
-  return Array.from(buckets.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, appliedCount]) => ({ date, appliedCount }))
+export async function analyticsByUser(userId: string, from: Date): Promise<AnalyticsBucket[]> {
+  const { data } = await supabase
+    .from('jobs')
+    .select('applied_at')
+    .eq('user_id', userId)
+    .eq('status', 'applied')
+    .gte('applied_at', from.toISOString())
+  return buildBuckets((data ?? []).map((r) => r.applied_at as string))
 }
 
-export function analyticsAllUsersSeries(from: Date): AnalyticsBucket[] {
-  const buckets = new Map<string, number>()
-  for (const job of readJobs()) {
-    if (job.status !== 'applied' || !job.appliedAt) continue
-    const ts = new Date(job.appliedAt)
-    if (Number.isNaN(ts.getTime()) || ts < from) continue
-    const day = ts.toISOString().slice(0, 10)
-    buckets.set(day, (buckets.get(day) ?? 0) + 1)
-  }
-  return Array.from(buckets.entries())
-    .sort((a, b) => a[0].localeCompare(b[0]))
-    .map(([date, appliedCount]) => ({ date, appliedCount }))
+export async function analyticsAllUsersSeries(from: Date): Promise<AnalyticsBucket[]> {
+  const { data } = await supabase
+    .from('jobs')
+    .select('applied_at')
+    .eq('status', 'applied')
+    .gte('applied_at', from.toISOString())
+  return buildBuckets((data ?? []).map((r) => r.applied_at as string))
 }
 
-export function analyticsAllUsers(from: Date): Array<{ userId: string; username: string; appliedCount: number }> {
-  const users = readUsers()
+export async function analyticsAllUsers(
+  from: Date,
+): Promise<Array<{ userId: string; username: string; appliedCount: number }>> {
+  const [{ data: jobs }, { data: users }] = await Promise.all([
+    supabase.from('jobs').select('user_id').eq('status', 'applied').gte('applied_at', from.toISOString()),
+    supabase.from('users').select('id, username'),
+  ])
   const counts = new Map<string, number>()
-  for (const job of readJobs()) {
-    if (job.status !== 'applied' || !job.appliedAt) continue
-    const ts = new Date(job.appliedAt)
-    if (Number.isNaN(ts.getTime()) || ts < from) continue
-    counts.set(job.userId, (counts.get(job.userId) ?? 0) + 1)
+  for (const j of jobs ?? []) counts.set(j.user_id, (counts.get(j.user_id) ?? 0) + 1)
+  return (users ?? []).map((u) => ({ userId: u.id, username: u.username, appliedCount: counts.get(u.id) ?? 0 }))
+}
+
+function buildBuckets(appliedAts: string[]): AnalyticsBucket[] {
+  const buckets = new Map<string, number>()
+  for (const ts of appliedAts) {
+    const day = ts.slice(0, 10)
+    buckets.set(day, (buckets.get(day) ?? 0) + 1)
   }
-  return users.map((u) => ({
-    userId: u.id,
-    username: u.username,
-    appliedCount: counts.get(u.id) ?? 0,
-  }))
+  return Array.from(buckets.entries())
+    .sort((a, b) => a[0].localeCompare(b[0]))
+    .map(([date, appliedCount]) => ({ date, appliedCount }))
+}
+
+function dbRowToJob(row: Record<string, unknown>): Job {
+  return {
+    id: row.id as string,
+    userId: row.user_id as string,
+    title: row.title as string,
+    company: row.company as string,
+    location: (row.location as string) ?? '',
+    platform: row.platform as Job['platform'],
+    url: row.url as string,
+    postedDate: (row.posted_date as string) ?? '',
+    description: row.description as string | undefined,
+    salary: row.salary as string | undefined,
+    jobType: row.job_type as string | undefined,
+    scrapedAt: row.scraped_at as string,
+    status: row.status as Job['status'],
+    appliedAt: row.applied_at as string | undefined,
+  }
 }

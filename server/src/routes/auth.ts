@@ -21,8 +21,10 @@ const router = Router()
 const MANUAL_LOGIN_WAIT_MS = 10 * 60 * 1000
 const activeConnectLocks = new Set<'linkedin' | 'stepstone' | 'xing'>()
 
+import { resolveUserId } from '../utils/userStore'
+
 function getUserId(req: { header(name: string): string | undefined }): string {
-  return String(req.header('x-user-id') || 'admin')
+  return resolveUserId(String(req.header('x-user-id') || 'admin'))
 }
 
 const manualFlag = process.env.AUTH_MANUAL_CONNECT
@@ -554,7 +556,7 @@ async function runManualConnectLinkedInFirefox(userId: string): Promise<{ ok: bo
 
     const raw = await page.context().cookies(['https://www.linkedin.com'])
     const cookies = playwrightCookiesToProtocol(raw)
-    saveSession(userId, 'linkedin', { cookies, loggedInAt: new Date(), username })
+    await saveSession(userId, 'linkedin', { cookies, loggedInAt: new Date(), username })
     return { ok: true, username }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Login failed' }
@@ -580,7 +582,7 @@ async function runManualConnect(
     if (outcome === 'timeout') return { ok: false, error: `Timed out waiting for manual ${waitOpts.label} login.` }
 
     const cookies = await page.cookies() as unknown as Protocol.Network.CookieParam[]
-    saveSession(userId, platform, { cookies, loggedInAt: new Date(), username })
+    await saveSession(userId, platform, { cookies, loggedInAt: new Date(), username })
     return { ok: true, username }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Login failed' }
@@ -626,7 +628,7 @@ async function connectStepStoneHeadless(email: string, password: string, userId:
       return { ok: false, error: 'StepStone login failed. Check your credentials and try again.' }
     }
 
-    saveSession(userId, 'stepstone', { cookies, loggedInAt: new Date(), username: email })
+    await saveSession(userId, 'stepstone', { cookies, loggedInAt: new Date(), username: email })
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'StepStone login failed' }
@@ -671,7 +673,7 @@ async function connectLinkedInHeadless(email: string, password: string, userId: 
     if (!hasLiAt || currentUrl.includes('/login') || currentUrl.includes('/checkpoint') || currentUrl.includes('/challenge')) {
       return { ok: false, error: 'LinkedIn login failed. Check your credentials and try again.' }
     }
-    saveSession(userId, 'linkedin', { cookies, loggedInAt: new Date(), username: email })
+    await saveSession(userId, 'linkedin', { cookies, loggedInAt: new Date(), username: email })
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'LinkedIn login failed' }
@@ -734,7 +736,7 @@ async function connectXingHeadless(email: string, password: string, userId: stri
       return { ok: false, error: 'Xing login failed. Check your credentials and try again.' }
     }
 
-    saveSession(userId, 'xing', { cookies, loggedInAt: new Date(), username: email })
+    await saveSession(userId, 'xing', { cookies, loggedInAt: new Date(), username: email })
     return { ok: true }
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : 'Xing login failed' }
@@ -753,7 +755,7 @@ router.get('/status', (req: Request, res: Response) => {
 router.post('/:platform/disconnect', async (req: Request, res: Response) => {
   const userId = getUserId(req)
   const platform = String(req.params.platform)
-  clearSession(userId, platform)
+  await clearSession(userId, platform)
   if (platform === 'linkedin') {
     await closeLinkedInFirefoxBrowser().catch(() => undefined)
   }

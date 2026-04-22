@@ -1,12 +1,3 @@
-/**
- * POST /api/scrape          — one-shot JSON response (all platforms)
- * GET  /api/scrape/stream   — Server-Sent Events stream (real-time progress)
- *
- * Both endpoints accept the same query/body params:
- *   jobTitle   string   required
- *   location   string   optional
- *   platforms  string   comma-separated: "linkedin,stepstone,xing"
- */
 import { Router, type Request, type Response } from 'express'
 import { scrapeLinkedIn } from '../scrapers/linkedin'
 import { scrapeStepStone } from '../scrapers/stepstone'
@@ -14,13 +5,13 @@ import { scrapeXing } from '../scrapers/xing'
 import type { Platform, ScrapedJob, ScrapeEvent, ProgressCallback } from '../scrapers/types'
 import { closeScrapeBrowser } from '../utils/browser'
 import { mergeJobsForUser } from '../utils/jobStore'
+import { resolveUserId } from '../utils/userStore'
 
 const router = Router()
-function getUserId(req: Request): string {
-  return String(req.header('x-user-id') || 'admin')
-}
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+function getUserId(req: Request): string {
+  return resolveUserId(String(req.header('x-user-id') || 'admin'))
+}
 
 function parsePlatforms(raw: string | undefined): Platform[] {
   const ALL: Platform[] = ['linkedin', 'stepstone', 'xing']
@@ -32,13 +23,11 @@ type ScraperFn = (title: string, location: string, cb: ProgressCallback, userId:
 
 function buildScrapers(platforms: Platform[]): Record<Platform, ScraperFn | null> {
   return {
-    linkedin:  platforms.includes('linkedin')  ? scrapeLinkedIn  : null,
+    linkedin: platforms.includes('linkedin') ? scrapeLinkedIn : null,
     stepstone: platforms.includes('stepstone') ? scrapeStepStone : null,
-    xing:      platforms.includes('xing')      ? scrapeXing      : null,
+    xing: platforms.includes('xing') ? scrapeXing : null,
   }
 }
-
-// ── POST /api/scrape ──────────────────────────────────────────────────────────
 
 router.post('/', async (req: Request, res: Response) => {
   const userId = getUserId(req)
@@ -62,30 +51,20 @@ router.post('/', async (req: Request, res: Response) => {
     for (const platform of platforms) {
       const fn = scrapers[platform]
       if (!fn) continue
-
       try {
         const jobs = await fn(jobTitle.trim(), location.trim(), (evt) => events.push(evt), userId)
         allJobs.push(...jobs)
       } catch (err) {
-        events.push({
-          type: 'error',
-          platform,
-          error: err instanceof Error ? err.message : String(err),
-        })
+        events.push({ type: 'error', platform, error: err instanceof Error ? err.message : String(err) })
       }
     }
-
-    // Sort newest first
     allJobs.sort((a, b) => new Date(b.postedDate).getTime() - new Date(a.postedDate).getTime())
-
-    const saved = mergeJobsForUser(userId, allJobs)
+    const saved = await mergeJobsForUser(userId, allJobs)
     res.json({ jobs: saved, events })
   } finally {
     await closeScrapeBrowser().catch(() => undefined)
   }
 })
-
-// ── GET /api/scrape/stream  (SSE) ─────────────────────────────────────────────
 
 router.get('/stream', (req: Request, res: Response) => {
   const userId = getUserId(req)
@@ -100,10 +79,9 @@ router.get('/stream', (req: Request, res: Response) => {
     return
   }
 
-  // Set up SSE headers
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
-  res.setHeader('X-Accel-Buffering', 'no') // disable nginx buffering
+  res.setHeader('X-Accel-Buffering', 'no')
   res.flushHeaders()
 
   function send(evt: ScrapeEvent) {
@@ -118,7 +96,6 @@ router.get('/stream', (req: Request, res: Response) => {
     for (const platform of platforms) {
       const fn = scrapers[platform]
       if (!fn) continue
-
       try {
         const jobs = await fn(
           jobTitle!.trim(),
@@ -132,17 +109,12 @@ router.get('/stream', (req: Request, res: Response) => {
         allJobs.push(...jobs)
         send({ type: 'jobs', platform, jobs, progress: 100 })
       } catch (err) {
-        send({
-          type: 'error',
-          platform,
-          error: err instanceof Error ? err.message : String(err),
-        })
+        send({ type: 'error', platform, error: err instanceof Error ? err.message : String(err) })
       }
     }
   })()
-    .then(() => {
-      // Persist to server-side JSON store, then send final result
-      const saved = mergeJobsForUser(userId, allJobs)
+    .then(async () => {
+      const saved = await mergeJobsForUser(userId, allJobs)
       send({ type: 'done', jobs: saved, totalJobs: saved.length })
       res.end()
     })

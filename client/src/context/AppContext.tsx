@@ -20,7 +20,7 @@ import {
   type ConnectResult,
 } from '../services/api'
 
-export type ActivePage = 'dashboard' | 'settings' | 'analytics'
+export type ActivePage = 'dashboard' | 'settings' | 'analytics' | 'admin'
 export interface Toast { id: string; message: string; type: 'success' | 'error' | 'info' }
 
 interface AppContextValue {

@@ -35,6 +35,7 @@ export interface AuthUser {
   username: string
   email: string
   role: 'admin' | 'user'
+  status: 'active' | 'disabled'
 }
 
 function userHeaders(userId?: string): HeadersInit {
@@ -179,13 +180,38 @@ export async function changePasswordApi(userId: string, currentPassword: string,
   }
 }
 
-export async function fetchUsersApi(): Promise<AuthUser[]> {
+export async function fetchUsersApi(adminId?: string): Promise<AuthUser[]> {
   try {
-    const res = await fetch(`${BASE}/api/users`)
+    const res = await fetch(`${BASE}/api/users`, { headers: userHeaders(adminId) })
     if (!res.ok) return []
     return await res.json() as AuthUser[]
   } catch {
     return []
+  }
+}
+
+export async function deleteUserApi(id: string, adminId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/api/users/${id}`, {
+      method: 'DELETE',
+      headers: userHeaders(adminId),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+export async function setUserStatusApi(id: string, status: 'active' | 'disabled', adminId: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/api/users/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...userHeaders(adminId) },
+      body: JSON.stringify({ status }),
+    })
+    return res.ok
+  } catch {
+    return false
   }
 }
 

@@ -10,7 +10,9 @@
     "playwright:install": "npx playwright install --with-deps firefox"
   },
   "dependencies": {
+    "@supabase/supabase-js": "^2.78.0",
     "axios": "^1.7.7",
+    "bcryptjs": "^3.0.3",
     "cheerio": "^1.0.0",
     "cors": "^2.8.5",
     "date-fns": "^4.1.0",
@@ -22,6 +24,7 @@
     "puppeteer-extra-plugin-stealth": "^2.11.2"
   },
   "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
     "@types/cheerio": "^0.22.35",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",

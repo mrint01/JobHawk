@@ -47,8 +47,8 @@ export default function AnalyticsPage() {
   const targetUserId = isAdmin ? (selectedViewUserId ?? 'all') : undefined
 
   useEffect(() => {
-    if (isAdmin) fetchUsersApi().then(setUsers)
-  }, [isAdmin])
+    if (isAdmin) fetchUsersApi(appState.userId).then(setUsers)
+  }, [isAdmin, appState.userId])
 
   useEffect(() => {
     if (!appState.userId) return
@@ -62,7 +62,8 @@ export default function AnalyticsPage() {
 
   function dayKey(offset: number): string {
     const d = new Date()
-    d.setDate(d.getDate() - offset)
+    d.setUTCHours(0, 0, 0, 0)
+    d.setUTCDate(d.getUTCDate() - offset)
     return d.toISOString().slice(0, 10)
   }
 
@@ -79,21 +80,23 @@ export default function AnalyticsPage() {
   const allTimeCount = allTimeSeries.reduce((sum, item) => sum + item.appliedCount, 0)
 
   const chartData = useMemo(() => {
-    const fromDate = new Date(from)
-    fromDate.setHours(0, 0, 0, 0)
-    const toDate = new Date()
-    toDate.setHours(0, 0, 0, 0)
     const dataMap = new Map(series.map((item) => [item.date, item.appliedCount]))
     const dates: { date: string; count: number; label: string }[] = []
-    const cursor = new Date(fromDate)
-    while (cursor <= toDate) {
-      const key = cursor.toISOString().slice(0, 10)
+
+    // Use UTC throughout — server buckets applied_at by UTC date
+    const cursor = new Date(from)
+    cursor.setUTCHours(0, 0, 0, 0)
+    const end = new Date()
+    end.setUTCHours(0, 0, 0, 0)
+
+    while (cursor <= end) {
+      const key = cursor.toISOString().slice(0, 10) // UTC date key, matches server
       dates.push({
         date: key,
         count: dataMap.get(key) ?? 0,
-        label: cursor.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }),
+        label: new Date(key + 'T00:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }),
       })
-      cursor.setDate(cursor.getDate() + 1)
+      cursor.setUTCDate(cursor.getUTCDate() + 1)
     }
     return dates
   }, [series, from])

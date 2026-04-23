@@ -68,7 +68,10 @@ router.get('/analytics/users', async (req: Request, res: Response) => {
   const fromRaw = String(req.query.from ?? '')
   const from = new Date(fromRaw)
   const safeFrom = Number.isNaN(from.getTime()) ? new Date(0) : from
-  res.json(await analyticsAllUsers(safeFrom))
+  const toRaw = String(req.query.to ?? '')
+  const to = new Date(toRaw)
+  const safeTo = Number.isNaN(to.getTime()) ? null : to
+  res.json(await analyticsAllUsers(safeFrom, safeTo))
 })
 
 export default router

@@ -47,7 +47,7 @@ interface AppContextValue {
   appliedJobs: Job[]
   markApplied: (id: string) => void
   markUnapplied: (id: string) => void
-  deleteJob: (id: string) => void
+  deleteJob: (id: string) => Promise<void>
   clearJobs: () => void
   clearJobOffers: () => void
   scrapeProgress: ScrapeProgress | null
@@ -175,11 +175,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setJobs((prev) => prev.map((j) => j.id === id ? { ...j, status: 'new' as const, appliedAt: undefined } : j))
   }, [appState.userId])
 
-  const deleteJob = useCallback((id: string) => {
+  const deleteJob = useCallback(async (id: string): Promise<void> => {
     if (!appState.userId) return
-    deleteJobApi(id, appState.userId).then((updated) => {
-      if (updated !== null) setJobs(updated)
-    }).catch(() => undefined)
+    const updated = await deleteJobApi(id, appState.userId)
+    if (updated !== null) setJobs(updated)
   }, [appState.userId])
 
   const clearJobs = useCallback(() => {

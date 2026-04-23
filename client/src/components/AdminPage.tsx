@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react'
 import {
   Search, Trash2, UserX, UserCheck, ChevronLeft, ChevronRight,
-  Users, BarChart2, Calendar, ShieldCheck,
+  Users, BarChart2, Calendar, ShieldCheck, Filter,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import {
@@ -18,6 +18,15 @@ function fromDateForPeriod(period: Period, customFrom: string): string {
   if (period === '7d') { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString() }
   if (period === '30d') { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString() }
   return customFrom ? new Date(customFrom).toISOString() : new Date(0).toISOString()
+}
+
+function toDateForPeriod(period: Period, customTo: string): string | undefined {
+  if (period === 'custom' && customTo) {
+    const d = new Date(customTo)
+    d.setHours(23, 59, 59, 999)
+    return d.toISOString()
+  }
+  return undefined
 }
 
 function Pagination({ page, total, pageSize, onChange }: {
@@ -105,13 +114,16 @@ export default function AdminPage() {
   const [analyticsLoading, setAnalyticsLoading] = useState(true)
   const [period, setPeriod] = useState<Period>('30d')
   const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
   const [selectedUserId, setSelectedUserId] = useState('all')
+  const [analyticsSearch, setAnalyticsSearch] = useState('')
   const [analyticsPage, setAnalyticsPage] = useState(1)
 
   async function loadAnalytics() {
     setAnalyticsLoading(true)
     const from = fromDateForPeriod(period, customFrom)
-    const data = await fetchAnalyticsUsersApi(adminId, from)
+    const to = toDateForPeriod(period, customTo)
+    const data = await fetchAnalyticsUsersApi(adminId, from, to)
     setAnalytics(data)
     setAnalyticsLoading(false)
   }
@@ -119,12 +131,14 @@ export default function AdminPage() {
   useEffect(() => {
     if (period === 'custom' && !customFrom) return
     void loadAnalytics()
-  }, [period, customFrom])
+  }, [period, customFrom, customTo])
 
   const filteredAnalytics = useMemo(() => {
-    const list = selectedUserId === 'all' ? analytics : analytics.filter(a => a.userId === selectedUserId)
+    let list = selectedUserId === 'all' ? analytics : analytics.filter(a => a.userId === selectedUserId)
+    const q = analyticsSearch.trim().toLowerCase()
+    if (q) list = list.filter(a => a.username.toLowerCase().includes(q))
     return [...list].sort((a, b) => b.appliedCount - a.appliedCount)
-  }, [analytics, selectedUserId])
+  }, [analytics, selectedUserId, analyticsSearch])
 
   const pagedAnalytics = filteredAnalytics.slice((analyticsPage - 1) * PAGE_SIZE, analyticsPage * PAGE_SIZE)
 
@@ -151,14 +165,19 @@ export default function AdminPage() {
               {users.length}
             </span>
           </div>
-          <div className="relative w-full sm:w-64">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-            <input
-              className="input pl-9 text-sm"
-              placeholder="Search by username or email…"
-              value={userSearch}
-              onChange={e => { setUserSearch(e.target.value); setUserPage(1) }}
-            />
+          <div className="flex flex-col gap-1 w-full sm:w-64">
+            <label className="text-xs font-medium text-gray-500 dark:text-slate-400 flex items-center gap-1">
+              <Search className="w-3 h-3" /> Search
+            </label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                className="input pl-9 text-sm w-full"
+                placeholder="Username or email…"
+                value={userSearch}
+                onChange={e => { setUserSearch(e.target.value); setUserPage(1) }}
+              />
+            </div>
           </div>
         </div>
 
@@ -247,39 +266,82 @@ export default function AdminPage() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-wrap gap-3 items-center">
-          {/* Period */}
-          <div className="flex items-center gap-1 bg-gray-100 dark:bg-slate-800 rounded-xl p-1">
-            {(['7d', '30d', 'custom'] as Period[]).map(p => (
-              <button key={p} onClick={() => { setPeriod(p); setAnalyticsPage(1) }}
-                className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${period === p ? 'bg-white dark:bg-slate-700 shadow-sm text-gray-900 dark:text-white' : 'text-gray-500 dark:text-slate-400 hover:text-gray-700 dark:hover:text-slate-300'}`}>
-                {p === '7d' ? 'Last 7 days' : p === '30d' ? 'Last 30 days' : 'Custom'}
-              </button>
-            ))}
+        <div className="flex flex-wrap gap-4 items-end">
+          {/* Period dropdown */}
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-gray-500 dark:text-slate-400 flex items-center gap-1">
+              <Filter className="w-3 h-3" /> Period
+            </label>
+            <select
+              className="input text-sm w-auto"
+              value={period}
+              onChange={e => { setPeriod(e.target.value as Period); setAnalyticsPage(1) }}
+            >
+              <option value="7d">Last 7 days</option>
+              <option value="30d">Last 30 days</option>
+              <option value="custom">Custom</option>
+            </select>
           </div>
 
-          {/* Custom date input */}
+          {/* Custom date inputs */}
           {period === 'custom' && (
-            <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-gray-400 flex-shrink-0" />
-              <input
-                type="date"
-                className="input text-sm w-auto"
-                value={customFrom}
-                onChange={e => { setCustomFrom(e.target.value); setAnalyticsPage(1) }}
-              />
-            </div>
+            <>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-gray-500 dark:text-slate-400 flex items-center gap-1">
+                  <Calendar className="w-3 h-3" /> From
+                </label>
+                <input
+                  type="date"
+                  className="input text-sm w-auto"
+                  value={customFrom}
+                  onChange={e => { setCustomFrom(e.target.value); setAnalyticsPage(1) }}
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-xs font-medium text-gray-500 dark:text-slate-400 flex items-center gap-1">
+                  <Calendar className="w-3 h-3" /> To
+                </label>
+                <input
+                  type="date"
+                  className="input text-sm w-auto"
+                  value={customTo}
+                  min={customFrom}
+                  onChange={e => { setCustomTo(e.target.value); setAnalyticsPage(1) }}
+                />
+              </div>
+            </>
           )}
 
           {/* User selector */}
-          <select
-            className="input text-sm w-auto"
-            value={selectedUserId}
-            onChange={e => { setSelectedUserId(e.target.value); setAnalyticsPage(1) }}
-          >
-            <option value="all">All users</option>
-            {users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
-          </select>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs font-medium text-gray-500 dark:text-slate-400 flex items-center gap-1">
+              <Users className="w-3 h-3" /> User
+            </label>
+            <select
+              className="input text-sm w-auto"
+              value={selectedUserId}
+              onChange={e => { setSelectedUserId(e.target.value); setAnalyticsPage(1) }}
+            >
+              <option value="all">All users</option>
+              {users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+            </select>
+          </div>
+
+          {/* Search */}
+          <div className="flex flex-col gap-1 flex-1 min-w-[180px]">
+            <label className="text-xs font-medium text-gray-500 dark:text-slate-400 flex items-center gap-1">
+              <Search className="w-3 h-3" /> Search username
+            </label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                className="input pl-9 text-sm w-full"
+                placeholder="Filter by username…"
+                value={analyticsSearch}
+                onChange={e => { setAnalyticsSearch(e.target.value); setAnalyticsPage(1) }}
+              />
+            </div>
+          </div>
         </div>
 
         {analyticsLoading ? (

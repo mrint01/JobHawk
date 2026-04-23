@@ -1,4 +1,5 @@
-import { MapPin, Building2, ExternalLink, CheckCheck, Clock, Trash2 } from 'lucide-react'
+import { useState } from 'react'
+import { MapPin, Building2, ExternalLink, CheckCheck, Clock, Trash2, Loader2 } from 'lucide-react'
 import type { Job } from '../types'
 import PlatformBadge from './PlatformBadge'
 import { useApp } from '../context/AppContext'
@@ -8,8 +9,14 @@ interface Props { job: Job }
 
 export default function JobCard({ job }: Props) {
   const { markApplied, deleteJob } = useApp()
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const timeAgo = formatPostedTime(job.postedDate) || 'time unavailable'
+
+  async function handleDelete() {
+    setIsDeleting(true)
+    try { await deleteJob(job.id) } finally { setIsDeleting(false) }
+  }
 
   return (
     <div className="card h-full flex flex-col p-4 sm:p-5 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 group animate-slide-up">
@@ -31,7 +38,9 @@ export default function JobCard({ job }: Props) {
       <div className="flex flex-col gap-1.5 text-xs text-gray-400 dark:text-slate-500 mb-4">
         <span className="flex items-start gap-1.5 min-w-0">
           <MapPin className="w-3.5 h-3.5 mt-0.5 flex-shrink-0" />
-          <span className="break-words leading-relaxed">{job.location}</span>
+          <span className="min-w-0 leading-relaxed break-words" style={{ overflowWrap: 'anywhere' }}>
+            {job.location?.replace(/,(?!\s)/g, ', ')}
+          </span>
         </span>
 
         <span className="flex items-start gap-1.5 min-w-0">
@@ -62,9 +71,9 @@ export default function JobCard({ job }: Props) {
           <CheckCheck className="w-3.5 h-3.5" />
           Mark Applied
         </button>
-        <button onClick={() => deleteJob(job.id)} className="btn-danger w-full justify-center border border-red-200 dark:border-red-500/30">
-          <Trash2 className="w-3.5 h-3.5" />
-          Delete
+        <button onClick={handleDelete} disabled={isDeleting} className="btn-danger w-full justify-center border border-red-200 dark:border-red-500/30 disabled:opacity-60 disabled:cursor-not-allowed">
+          {isDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+          {isDeleting ? 'Deleting…' : 'Delete'}
         </button>
       </div>
     </div>

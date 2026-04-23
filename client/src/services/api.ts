@@ -229,9 +229,11 @@ export async function fetchAnalyticsSeriesApi(userId: string, from: string, targ
   }
 }
 
-export async function fetchAnalyticsUsersApi(userId: string, from: string): Promise<Array<{ userId: string; username: string; appliedCount: number }>> {
+export async function fetchAnalyticsUsersApi(userId: string, from: string, to?: string): Promise<Array<{ userId: string; username: string; appliedCount: number }>> {
   try {
-    const res = await fetch(`${BASE}/api/jobs/analytics/users?from=${encodeURIComponent(from)}`, {
+    const params = new URLSearchParams({ from })
+    if (to) params.set('to', to)
+    const res = await fetch(`${BASE}/api/jobs/analytics/users?${params}`, {
       headers: userHeaders(userId),
     })
     if (!res.ok) return []

@@ -142,9 +142,12 @@ export async function analyticsAllUsersSeries(from: Date): Promise<AnalyticsBuck
 
 export async function analyticsAllUsers(
   from: Date,
+  to?: Date | null,
 ): Promise<Array<{ userId: string; username: string; appliedCount: number }>> {
+  let query = supabase.from('jobs').select('user_id').eq('status', 'applied').gte('applied_at', from.toISOString())
+  if (to) query = query.lte('applied_at', to.toISOString())
   const [{ data: jobs }, { data: users }] = await Promise.all([
-    supabase.from('jobs').select('user_id').eq('status', 'applied').gte('applied_at', from.toISOString()),
+    query,
     supabase.from('users').select('id, username'),
   ])
   const counts = new Map<string, number>()

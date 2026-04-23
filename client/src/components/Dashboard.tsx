@@ -128,7 +128,7 @@ function Pagination({
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { newJobs, appliedJobs, scrapeProgress, isScraping, clearJobs, clearJobOffers, appState } = useApp()
+  const { newJobs, appliedJobs, scrapeProgress, isScraping, clearJobs, clearJobOffers, appState, isJobsLoading } = useApp()
   const [activeTab, setActiveTab] = useState<Tab>('offers')
   const [offersPage, setOffersPage] = useState(1)
   const [appliedPage, setAppliedPage] = useState(1)
@@ -391,7 +391,22 @@ export default function Dashboard() {
         )}
 
         {/* Grid */}
-        {displayedJobs.length === 0 ? (
+        {isJobsLoading ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <div key={i} className="card p-4 sm:p-5 flex flex-col gap-3 animate-pulse">
+                <div className="h-5 bg-gray-100 dark:bg-slate-800 rounded-lg w-3/4" />
+                <div className="h-4 bg-gray-100 dark:bg-slate-800 rounded-lg w-1/2" />
+                <div className="h-3 bg-gray-100 dark:bg-slate-800 rounded-lg w-2/3 mt-1" />
+                <div className="h-3 bg-gray-100 dark:bg-slate-800 rounded-lg w-1/3" />
+                <div className="mt-auto pt-3 border-t border-gray-100 dark:border-slate-700 flex flex-col gap-2">
+                  <div className="h-8 bg-gray-100 dark:bg-slate-800 rounded-xl" />
+                  <div className="h-8 bg-gray-100 dark:bg-slate-800 rounded-xl" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : displayedJobs.length === 0 ? (
           activeTab === 'offers' ? (
             <EmptyState
               icon={Briefcase}

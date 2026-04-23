@@ -50,6 +50,7 @@ interface AppContextValue {
   deleteJob: (id: string) => Promise<void>
   clearJobs: () => void
   clearJobOffers: () => void
+  isJobsLoading: boolean
   scrapeProgress: ScrapeProgress | null
   isScraping: boolean
   startScrape: (params: ScrapeParams) => void
@@ -63,6 +64,7 @@ const AppContext = createContext<AppContextValue | null>(null)
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [appState, setAppState] = useState<AppState>(getAppState)
   const [jobs, setJobs] = useState<Job[]>([])
+  const [isJobsLoading, setIsJobsLoading] = useState(true)
   const [scrapeProgress, setScrapeProgress] = useState<ScrapeProgress | null>(null)
   const [toasts, setToasts] = useState<Toast[]>([])
   const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -95,8 +97,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         setAppState((s) => ({ ...s, linkedinConnected: result.connectedPlatforms.includes('linkedin'), stepstonConnected: result.connectedPlatforms.includes('stepstone'), xingConnected: result.connectedPlatforms.includes('xing') }))
         if (!jobsLoadedRef.current && appState.userId) {
           jobsLoadedRef.current = true
+          setIsJobsLoading(true)
           const serverJobs = await fetchJobsApi(appState.userId)
-          if (!cancelled && serverJobs !== null) setJobs(serverJobs)
+          if (!cancelled) {
+            if (serverJobs !== null) setJobs(serverJobs)
+            setIsJobsLoading(false)
+          }
         }
       }
     }
@@ -117,10 +123,12 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (usernameOrEmail: string, password: string) => {
     const result = await loginApi(usernameOrEmail, password)
     if (!result.ok || !result.user) return { ok: false, error: result.error ?? 'Login failed' }
-    jobsLoadedRef.current = false
+    jobsLoadedRef.current = true
+    setIsJobsLoading(true)
     setAppState((s) => ({ ...s, isLoggedIn: true, userId: result.user!.id, username: result.user!.username, email: result.user!.email, role: result.user!.role }))
     const serverJobs = await fetchJobsApi(result.user.id)
     if (serverJobs !== null) setJobs(serverJobs)
+    setIsJobsLoading(false)
     return { ok: true }
   }, [])
 
@@ -136,6 +144,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const logout = useCallback(() => {
     setAppState((s) => ({ ...s, isLoggedIn: false, userId: '', username: '', email: '', role: 'user' }))
     setJobs([])
+    setIsJobsLoading(true)
     setSidebarOpen(false)
     setActivePage('dashboard')
     jobsLoadedRef.current = false
@@ -214,7 +223,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       serverOnline, authMode, theme: appState.theme, setTheme: (t) => setAppState((s) => ({ ...s, theme: t })),
       activePage, setActivePage, sidebarOpen, setSidebarOpen, toggleSidebar,
       connectPlatform, disconnectPlatform, connectedPlatforms, platformConnecting,
-      jobs, newJobs, appliedJobs, markApplied, markUnapplied, deleteJob, clearJobs, clearJobOffers,
+      jobs, newJobs, appliedJobs, isJobsLoading, markApplied, markUnapplied, deleteJob, clearJobs, clearJobOffers,
       scrapeProgress, isScraping, startScrape, toasts, addToast, removeToast,
     }}>
       {children}

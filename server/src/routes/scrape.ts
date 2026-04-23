@@ -6,6 +6,7 @@ import type { Platform, ScrapedJob, ScrapeEvent, ProgressCallback } from '../scr
 import { closeScrapeBrowser } from '../utils/browser'
 import { mergeJobsForUser } from '../utils/jobStore'
 import { resolveUserId } from '../utils/userStore'
+import { isAgentReady, dispatchScrapeToAgent } from '../utils/linkedinAgentHub'
 
 const router = Router()
 
@@ -21,9 +22,15 @@ function parsePlatforms(raw: string | undefined): Platform[] {
 
 type ScraperFn = (title: string, location: string, cb: ProgressCallback, userId: string) => Promise<ScrapedJob[]>
 
-function buildScrapers(platforms: Platform[]): Record<Platform, ScraperFn | null> {
+function buildScrapers(platforms: Platform[], userId: string): Record<Platform, ScraperFn | null> {
+  const linkedinFn: ScraperFn | null = platforms.includes('linkedin')
+    ? isAgentReady()
+      ? (title, location, cb) => dispatchScrapeToAgent({ keywords: title, location, maxJobs: 100 }, cb)
+      : scrapeLinkedIn
+    : null
+
   return {
-    linkedin: platforms.includes('linkedin') ? scrapeLinkedIn : null,
+    linkedin: linkedinFn,
     stepstone: platforms.includes('stepstone') ? scrapeStepStone : null,
     xing: platforms.includes('xing') ? scrapeXing : null,
   }
@@ -43,7 +50,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   const platforms = parsePlatforms(rawPlatforms)
-  const scrapers = buildScrapers(platforms)
+  const scrapers = buildScrapers(platforms, userId)
   const events: ScrapeEvent[] = []
   const allJobs: ScrapedJob[] = []
 
@@ -89,7 +96,7 @@ router.get('/stream', (req: Request, res: Response) => {
   }
 
   const platforms = parsePlatforms(rawPlatforms)
-  const scrapers = buildScrapers(platforms)
+  const scrapers = buildScrapers(platforms, userId)
   const allJobs: ScrapedJob[] = []
 
   ;(async () => {

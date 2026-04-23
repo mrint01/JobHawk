@@ -15,9 +15,11 @@ import {
   loginApi,
   signupApi,
   changePasswordApi,
+  fetchLinkedInAgentStatus,
   type PlatformId,
   type ConnectPayload,
   type ConnectResult,
+  type LinkedInAgentStatus,
 } from '../services/api'
 
 export type ActivePage = 'dashboard' | 'settings' | 'analytics' | 'admin'
@@ -42,6 +44,7 @@ interface AppContextValue {
   disconnectPlatform: (p: Platform) => Promise<void>
   connectedPlatforms: Platform[]
   platformConnecting: Platform | null
+  linkedinAgent: LinkedInAgentStatus
   jobs: Job[]
   newJobs: Job[]
   appliedJobs: Job[]
@@ -72,6 +75,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [serverOnline, setServerOnline] = useState(false)
   const [authMode, setAuthMode] = useState<'manual' | 'headless'>('manual')
   const [platformConnecting, setPlatformConnecting] = useState<Platform | null>(null)
+  const [linkedinAgent, setLinkedinAgent] = useState<LinkedInAgentStatus>({ connected: false, hasSession: false, username: '' })
   const jobsLoadedRef = useRef(false)
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), [])
@@ -95,6 +99,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setAuthMode(result.authMode)
       if (result.online && appState.isLoggedIn) {
         setAppState((s) => ({ ...s, linkedinConnected: result.connectedPlatforms.includes('linkedin'), stepstonConnected: result.connectedPlatforms.includes('stepstone'), xingConnected: result.connectedPlatforms.includes('xing') }))
+        if (appState.userId) {
+          const agentStatus = await fetchLinkedInAgentStatus(appState.userId)
+          if (!cancelled) setLinkedinAgent(agentStatus)
+        }
         if (!jobsLoadedRef.current && appState.userId) {
           jobsLoadedRef.current = true
           setIsJobsLoading(true)
@@ -223,6 +231,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       serverOnline, authMode, theme: appState.theme, setTheme: (t) => setAppState((s) => ({ ...s, theme: t })),
       activePage, setActivePage, sidebarOpen, setSidebarOpen, toggleSidebar,
       connectPlatform, disconnectPlatform, connectedPlatforms, platformConnecting,
+      linkedinAgent,
       jobs, newJobs, appliedJobs, isJobsLoading, markApplied, markUnapplied, deleteJob, clearJobs, clearJobOffers,
       scrapeProgress, isScraping, startScrape, toasts, addToast, removeToast,
     }}>

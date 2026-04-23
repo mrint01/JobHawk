@@ -242,3 +242,23 @@ export async function fetchAnalyticsUsersApi(userId: string, from: string, to?: 
     return []
   }
 }
+
+export interface LinkedInAgentStatus {
+  connected: boolean
+  hasSession: boolean
+  username: string
+}
+
+export async function fetchLinkedInAgentStatus(userId: string): Promise<LinkedInAgentStatus> {
+  try {
+    const res = await fetch(`${BASE}/api/linkedin/agent-status`, { headers: userHeaders(userId) })
+    if (!res.ok) return { connected: false, hasSession: false, username: '' }
+    return await res.json() as LinkedInAgentStatus
+  } catch {
+    return { connected: false, hasSession: false, username: '' }
+  }
+}
+
+export function getLinkedInAgentDownloadUrl(): string {
+  return `${BASE}/api/linkedin/agent/download`
+}

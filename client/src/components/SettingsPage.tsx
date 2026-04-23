@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react'
 import {
   Sun, Moon, AlertCircle, Check, KeyRound,
   Unlink, Wifi, Loader2, Eye, EyeOff, WifiOff,
+  Download, MonitorCheck,
 } from 'lucide-react'
 import type { Platform } from '../types'
 import { useApp } from '../context/AppContext'
+import { getLinkedInAgentDownloadUrl } from '../services/api'
 
 // ── Server offline banner ─────────────────────────────────────────────────────
 function ServerBanner() {
@@ -204,6 +206,79 @@ const PLATFORM_META: Record<
   },
 }
 
+// ── LinkedIn Agent Card (local agent required) ────────────────────────────────
+function LinkedInAgentCard() {
+  const { linkedinAgent } = useApp()
+  const connected = linkedinAgent.connected && linkedinAgent.hasSession
+
+  return (
+    <div className={`p-4 rounded-xl border-2 transition-all duration-150
+      ${connected
+        ? 'border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-500/5'
+        : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/40'
+      }`}
+    >
+      <div className="flex items-center gap-4">
+        <div className="w-11 h-11 rounded-xl flex items-center justify-center text-white font-bold text-sm flex-shrink-0 shadow-sm" style={{ backgroundColor: '#0077B5' }}>
+          in
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">LinkedIn</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+            Runs via a local agent on your machine
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {connected ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+              <MonitorCheck className="w-3.5 h-3.5" />
+              {linkedinAgent.username ? `@${linkedinAgent.username}` : 'Agent live'}
+            </span>
+          ) : linkedinAgent.connected ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Starting…
+            </span>
+          ) : (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-gray-400 dark:text-slate-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-slate-600" />
+              Not running
+            </span>
+          )}
+        </div>
+      </div>
+
+      {connected ? (
+        <div className="mt-3 flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 rounded-lg px-3 py-2">
+          <MonitorCheck className="w-3.5 h-3.5 flex-shrink-0" />
+          Agent is running locally and ready to scrape. Stop the script to disconnect.
+        </div>
+      ) : (
+        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/60 px-3 py-2.5">
+          <p className="text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
+            Download the script, then run:&nbsp;
+            <code className="bg-gray-200 dark:bg-slate-700 rounded px-1">python3 linkedin_agent.py --setup</code>
+            &nbsp;once, then&nbsp;
+            <code className="bg-gray-200 dark:bg-slate-700 rounded px-1">python3 linkedin_agent.py</code>
+          </p>
+          <a
+            href={getLinkedInAgentDownloadUrl()}
+            download="linkedin_agent.py"
+            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white shadow-sm transition-all duration-150 active:scale-95 flex-shrink-0"
+            style={{ backgroundColor: '#0077B5' }}
+          >
+            <Download className="w-3.5 h-3.5" />
+            Download
+          </a>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Standard platform card (StepStone, Xing) ─────────────────────────────────
 function PlatformCard({ platform }: { platform: Platform }) {
   const {
     appState,
@@ -216,9 +291,7 @@ function PlatformCard({ platform }: { platform: Platform }) {
   const meta = PLATFORM_META[platform]
 
   const connected =
-    platform === 'linkedin'  ? appState.linkedinConnected  :
-    platform === 'stepstone' ? appState.stepstonConnected :
-    appState.xingConnected
+    platform === 'stepstone' ? appState.stepstonConnected : appState.xingConnected
 
   const isConnecting = platformConnecting === platform
 
@@ -266,7 +339,6 @@ function PlatformCard({ platform }: { platform: Platform }) {
     >
       {/* Header row */}
       <div className="flex items-center gap-4">
-        {/* Icon */}
         <div
           className="w-11 h-11 rounded-xl flex items-center justify-center text-white font-bold text-sm flex-shrink-0 shadow-sm"
           style={{ backgroundColor: meta.color }}
@@ -274,13 +346,11 @@ function PlatformCard({ platform }: { platform: Platform }) {
           {meta.icon}
         </div>
 
-        {/* Info */}
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-gray-900 dark:text-white">{meta.label}</p>
           <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">{meta.description}</p>
         </div>
 
-        {/* Status + action */}
         <div className="flex items-center gap-2 flex-shrink-0">
           {connected ? (
             <>
@@ -315,9 +385,7 @@ function PlatformCard({ platform }: { platform: Platform }) {
                 style={{ backgroundColor: meta.color }}
               >
                 <Wifi className="w-3.5 h-3.5" />
-                {authMode === 'manual'
-                  ? 'Connect'
-                  : formOpen ? 'Hide Form' : 'Connect'}
+                {authMode === 'manual' ? 'Connect' : formOpen ? 'Hide Form' : 'Connect'}
               </button>
             </>
           )}
@@ -409,7 +477,7 @@ function PlatformSection() {
       }
     >
       <div className="space-y-3">
-        <PlatformCard platform="linkedin" />
+        <LinkedInAgentCard />
         <PlatformCard platform="stepstone" />
         <PlatformCard platform="xing" />
       </div>

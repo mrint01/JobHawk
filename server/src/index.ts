@@ -25,6 +25,7 @@ import {
   unregisterAgent,
   handleAgentMessage,
   getAgentStatus,
+  requestAgentSessionCheck,
 } from './utils/linkedinAgentHub'
 
 const PORT = Number(process.env.PORT ?? 3001)
@@ -55,15 +56,9 @@ app.get('/api/ping', (_req, res) => { res.json({ pong: true, v: 2 }) })
 
 app.get('/api/health', (req, res) => {
   const rawUserId = String(req.header('x-user-id') || 'admin')
-  const userId = resolveUserId(rawUserId)
+  resolveUserId(rawUserId)
 
   const sessionPlatforms = Object.keys(sessionsForUser(rawUserId)) as string[]
-
-  // Include linkedin if the local agent is connected and has a session
-  const agentStatus = getAgentStatus()
-  if (agentStatus.connected && agentStatus.hasSession && !sessionPlatforms.includes('linkedin')) {
-    sessionPlatforms.push('linkedin')
-  }
 
   res.json({
     status: 'ok',
@@ -77,6 +72,11 @@ app.get('/api/health', (req, res) => {
 
 app.get('/api/linkedin/agent-status', (_req, res) => {
   res.json(getAgentStatus())
+})
+
+app.post('/api/linkedin/agent/check-session', async (_req, res) => {
+  const status = await requestAgentSessionCheck()
+  res.json(status)
 })
 
 app.get('/api/linkedin/agent/download', (req, res) => {

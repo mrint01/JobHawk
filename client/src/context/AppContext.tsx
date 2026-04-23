@@ -16,6 +16,7 @@ import {
   signupApi,
   changePasswordApi,
   fetchLinkedInAgentStatus,
+  checkLinkedInAgentSession,
   type PlatformId,
   type ConnectPayload,
   type ConnectResult,
@@ -45,6 +46,8 @@ interface AppContextValue {
   connectedPlatforms: Platform[]
   platformConnecting: Platform | null
   linkedinAgent: LinkedInAgentStatus
+  refreshLinkedInAgent: (forceSessionCheck?: boolean) => Promise<LinkedInAgentStatus>
+  setLinkedInEnabled: (enabled: boolean) => void
   jobs: Job[]
   newJobs: Job[]
   appliedJobs: Job[]
@@ -98,10 +101,19 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       setServerOnline(result.online)
       setAuthMode(result.authMode)
       if (result.online && appState.isLoggedIn) {
-        setAppState((s) => ({ ...s, linkedinConnected: result.connectedPlatforms.includes('linkedin'), stepstonConnected: result.connectedPlatforms.includes('stepstone'), xingConnected: result.connectedPlatforms.includes('xing') }))
+        setAppState((s) => ({
+          ...s,
+          stepstonConnected: result.connectedPlatforms.includes('stepstone'),
+          xingConnected: result.connectedPlatforms.includes('xing'),
+        }))
         if (appState.userId) {
           const agentStatus = await fetchLinkedInAgentStatus(appState.userId)
-          if (!cancelled) setLinkedinAgent(agentStatus)
+          if (!cancelled) {
+            setLinkedinAgent(agentStatus)
+            if (!(agentStatus.connected && agentStatus.hasSession)) {
+              setAppState((s) => ({ ...s, linkedinConnected: false }))
+            }
+          }
         }
         if (!jobsLoadedRef.current && appState.userId) {
           jobsLoadedRef.current = true
@@ -127,6 +139,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const newJobs = jobs.filter((j) => j.status === 'new')
   const appliedJobs = jobs.filter((j) => j.status === 'applied')
   const isScraping = scrapeProgress?.isRunning ?? false
+
+  const refreshLinkedInAgent = useCallback(async (forceSessionCheck = false): Promise<LinkedInAgentStatus> => {
+    if (!appState.userId) {
+      const offline = { connected: false, hasSession: false, username: '' }
+      setLinkedinAgent(offline)
+      return offline
+    }
+    const status = forceSessionCheck
+      ? await checkLinkedInAgentSession(appState.userId)
+      : await fetchLinkedInAgentStatus(appState.userId)
+    setLinkedinAgent(status)
+    if (!(status.connected && status.hasSession)) {
+      setAppState((s) => ({ ...s, linkedinConnected: false }))
+    }
+    return status
+  }, [appState.userId])
+
+  const setLinkedInEnabled = useCallback((enabled: boolean) => {
+    setAppState((s) => ({ ...s, linkedinConnected: enabled }))
+  }, [])
 
   const login = useCallback(async (usernameOrEmail: string, password: string) => {
     const result = await loginApi(usernameOrEmail, password)
@@ -231,7 +263,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       serverOnline, authMode, theme: appState.theme, setTheme: (t) => setAppState((s) => ({ ...s, theme: t })),
       activePage, setActivePage, sidebarOpen, setSidebarOpen, toggleSidebar,
       connectPlatform, disconnectPlatform, connectedPlatforms, platformConnecting,
-      linkedinAgent,
+      linkedinAgent, refreshLinkedInAgent, setLinkedInEnabled,
       jobs, newJobs, appliedJobs, isJobsLoading, markApplied, markUnapplied, deleteJob, clearJobs, clearJobOffers,
       scrapeProgress, isScraping, startScrape, toasts, addToast, removeToast,
     }}>

@@ -259,6 +259,20 @@ export async function fetchLinkedInAgentStatus(userId: string): Promise<LinkedIn
   }
 }
 
+export async function checkLinkedInAgentSession(userId: string): Promise<LinkedInAgentStatus> {
+  try {
+    const res = await fetch(`${BASE}/api/linkedin/agent/check-session`, {
+      method: 'POST',
+      headers: userHeaders(userId),
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return { connected: false, hasSession: false, username: '' }
+    return await res.json() as LinkedInAgentStatus
+  } catch {
+    return { connected: false, hasSession: false, username: '' }
+  }
+}
+
 export function getLinkedInAgentDownloadUrl(): string {
   return `${BASE}/api/linkedin/agent/download`
 }

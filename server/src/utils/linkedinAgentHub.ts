@@ -17,8 +17,14 @@ interface PendingScrape {
   timer: ReturnType<typeof setTimeout>
 }
 
+interface PendingSessionCheck {
+  resolve: (status: AgentStatus) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
 let agent: AgentConnection | null = null
 const pendingScrapes = new Map<string, PendingScrape>()
+let pendingSessionCheck: PendingSessionCheck | null = null
 
 export interface AgentStatus {
   connected: boolean
@@ -33,6 +39,11 @@ export function registerAgent(ws: WebSocket, hasSession: boolean, username: stri
 
 export function unregisterAgent() {
   agent = null
+  if (pendingSessionCheck) {
+    clearTimeout(pendingSessionCheck.timer)
+    pendingSessionCheck.resolve({ connected: false, hasSession: false, username: '' })
+    pendingSessionCheck = null
+  }
   for (const [reqId, pending] of pendingScrapes) {
     clearTimeout(pending.timer)
     pending.onProgress({ type: 'error', platform: 'linkedin', error: 'LinkedIn agent disconnected during scrape.' })
@@ -49,6 +60,32 @@ export function getAgentStatus(): AgentStatus {
 
 export function isAgentReady(): boolean {
   return !!(agent && agent.hasSession)
+}
+
+export function requestAgentSessionCheck(timeoutMs = 8_000): Promise<AgentStatus> {
+  if (!agent) return Promise.resolve({ connected: false, hasSession: false, username: '' })
+
+  if (pendingSessionCheck) {
+    clearTimeout(pendingSessionCheck.timer)
+    pendingSessionCheck.resolve(getAgentStatus())
+    pendingSessionCheck = null
+  }
+
+  return new Promise<AgentStatus>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingSessionCheck = null
+      resolve(getAgentStatus())
+    }, timeoutMs)
+
+    pendingSessionCheck = { resolve, timer }
+    try {
+      agent!.ws.send(JSON.stringify({ type: 'check_session' }))
+    } catch {
+      clearTimeout(timer)
+      pendingSessionCheck = null
+      resolve(getAgentStatus())
+    }
+  })
 }
 
 export function dispatchScrapeToAgent(
@@ -89,6 +126,11 @@ export function handleAgentMessage(raw: string) {
       if (agent) {
         agent.hasSession = Boolean(data.hasSession)
         agent.username = String(data.username ?? '')
+      }
+      if (pendingSessionCheck) {
+        clearTimeout(pendingSessionCheck.timer)
+        pendingSessionCheck.resolve(getAgentStatus())
+        pendingSessionCheck = null
       }
       break
 

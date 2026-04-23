@@ -2,8 +2,7 @@
 """
 JobHawk LinkedIn Agent
 
-First run (login):  python3 linkedin_agent.py --setup
-Every run after:    python3 linkedin_agent.py
+Run:  python3 linkedin_agent.py
 """
 
 import sys
@@ -53,6 +52,9 @@ CHROME_PROFILE = PROFILE_DIR / "chrome_profile"
 # This URL is replaced at download time by the backend.
 # If you downloaded this script manually, set JOBRADAR_BACKEND_URL env var instead.
 DEFAULT_BACKEND_URL = "https://jobhawk-server-production.up.railway.app"
+# DEFAULT_BACKEND_URL = "http://localhost:3001"
+# DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-server-production.up.railway.app"
+
 
 HEARTBEAT_INTERVAL = 25
 RECONNECT_DELAY = 5
@@ -229,7 +231,7 @@ async def scrape_linkedin(page: Page, keywords: str, location: str, max_jobs: in
     await asyncio.sleep(2)
 
     if any(x in page.url for x in ["/login", "/authwall", "/checkpoint", "/challenge"]):
-        raise RuntimeError("LinkedIn redirected to login. Run --setup to re-authenticate.")
+        raise RuntimeError("LinkedIn redirected to login. Restart the agent and log in again.")
 
     for i in range(15):
         state = await page.evaluate(_STATE_JS)
@@ -240,7 +242,7 @@ async def scrape_linkedin(page: Page, keywords: str, location: str, max_jobs: in
 
     state = await page.evaluate(_STATE_JS)
     if state["count"] == 0:
-        raise RuntimeError("No jobs loaded. Session may be expired — run --setup again.")
+        raise RuntimeError("No jobs loaded. Session may be expired — restart the agent to log in again.")
 
     if progress_cb:
         await progress_cb(25)
@@ -304,6 +306,14 @@ class LinkedInAgent:
         self.context: Optional[BrowserContext] = None
         self.has_session = False
         self.running = True
+
+    async def _open_context(self, playwright, headless: bool):
+        return await playwright.chromium.launch_persistent_context(
+            str(CHROME_PROFILE),
+            headless=headless,
+            args=["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        )
 
     async def _check_logged_in(self) -> bool:
         page = await self.context.new_page()
@@ -390,28 +400,32 @@ class LinkedInAgent:
             finally:
                 hb.cancel()
 
-    async def run(self, setup_mode: bool = False):
+    async def run(self):
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
         async with async_playwright() as p:
-            browser = await p.chromium.launch_persistent_context(
-                str(CHROME_PROFILE),
-                headless=not setup_mode,
-                args=["--no-sandbox", "--disable-blink-features=AutomationControlled", "--disable-dev-shm-usage"],
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            )
+            browser = await self._open_context(p, headless=True)
             self.context = browser
-
-            if setup_mode:
-                await self._run_setup()
-                await browser.close()
-                print("\nSetup complete. Run  python3 linkedin_agent.py  to start the agent.")
-                return
 
             log.info("Checking LinkedIn session...")
             if not await self._check_logged_in():
-                print("\n⚠️  Not logged in. Run:  python3 linkedin_agent.py --setup")
+                print("\n⚠️  No active LinkedIn session found.")
                 await browser.close()
-                sys.exit(1)
+
+                browser = await self._open_context(p, headless=False)
+                self.context = browser
+                await self._run_setup()
+                if not await self._check_logged_in():
+                    print("\n❌  Login was not completed. Please run again and finish the LinkedIn login.")
+                    await browser.close()
+                    sys.exit(1)
+
+                await browser.close()
+                browser = await self._open_context(p, headless=True)
+                self.context = browser
+                if not await self._check_logged_in():
+                    print("\n❌  Session could not be reloaded after login. Please run again.")
+                    await browser.close()
+                    sys.exit(1)
 
             self.has_session = True
             log.info("✅  Session active. Connecting to backend...")
@@ -433,7 +447,6 @@ class LinkedInAgent:
 
 def main():
     parser = argparse.ArgumentParser(description="JobHawk LinkedIn Agent")
-    parser.add_argument("--setup", action="store_true", help="Login setup (opens browser)")
     parser.add_argument("--backend", help="Override backend URL")
     args = parser.parse_args()
 
@@ -459,7 +472,7 @@ def main():
     signal.signal(signal.SIGTERM, handle_exit)
 
     try:
-        loop.run_until_complete(agent.run(setup_mode=args.setup))
+        loop.run_until_complete(agent.run())
     except (RuntimeError, KeyboardInterrupt):
         pass
 

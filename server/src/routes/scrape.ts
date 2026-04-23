@@ -1,5 +1,4 @@
 import { Router, type Request, type Response } from 'express'
-import { scrapeLinkedIn } from '../scrapers/linkedin'
 import { scrapeStepStone } from '../scrapers/stepstone'
 import { scrapeXing } from '../scrapers/xing'
 import type { Platform, ScrapedJob, ScrapeEvent, ProgressCallback } from '../scrapers/types'
@@ -22,11 +21,15 @@ function parsePlatforms(raw: string | undefined): Platform[] {
 
 type ScraperFn = (title: string, location: string, cb: ProgressCallback, userId: string) => Promise<ScrapedJob[]>
 
-function buildScrapers(platforms: Platform[], userId: string): Record<Platform, ScraperFn | null> {
+function buildScrapers(platforms: Platform[]): Record<Platform, ScraperFn | null> {
   const linkedinFn: ScraperFn | null = platforms.includes('linkedin')
-    ? isAgentReady()
-      ? (title, location, cb) => dispatchScrapeToAgent({ keywords: title, location, maxJobs: 100 }, cb)
-      : scrapeLinkedIn
+    ? (title, location, cb) => {
+        if (!isAgentReady()) {
+          cb({ type: 'error', platform: 'linkedin', error: 'LinkedIn agent is not connected or session expired. Open Settings and click Connect on LinkedIn Agent.' })
+          return Promise.resolve([])
+        }
+        return dispatchScrapeToAgent({ keywords: title, location, maxJobs: 100 }, cb)
+      }
     : null
 
   return {
@@ -50,7 +53,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   const platforms = parsePlatforms(rawPlatforms)
-  const scrapers = buildScrapers(platforms, userId)
+  const scrapers = buildScrapers(platforms)
   const events: ScrapeEvent[] = []
   const allJobs: ScrapedJob[] = []
 
@@ -96,7 +99,7 @@ router.get('/stream', (req: Request, res: Response) => {
   }
 
   const platforms = parsePlatforms(rawPlatforms)
-  const scrapers = buildScrapers(platforms, userId)
+  const scrapers = buildScrapers(platforms)
   const allJobs: ScrapedJob[] = []
 
   ;(async () => {

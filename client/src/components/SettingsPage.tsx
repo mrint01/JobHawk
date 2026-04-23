@@ -208,8 +208,32 @@ const PLATFORM_META: Record<
 
 // ── LinkedIn Agent Card (local agent required) ────────────────────────────────
 function LinkedInAgentCard() {
-  const { linkedinAgent } = useApp()
+  const { linkedinAgent, refreshLinkedInAgent, serverOnline, appState, setLinkedInEnabled } = useApp()
+  const [checking, setChecking] = useState(false)
+  const [connectIssue, setConnectIssue] = useState<'offline' | 'expired' | null>(null)
   const connected = linkedinAgent.connected && linkedinAgent.hasSession
+  const selected = appState.linkedinConnected
+
+  async function handleConnectCheck() {
+    setChecking(true)
+    try {
+      const status = await refreshLinkedInAgent(true)
+      if (status.connected && status.hasSession) {
+        setConnectIssue(null)
+        setLinkedInEnabled(true)
+      } else if (!status.connected) {
+        setConnectIssue('offline')
+      } else {
+        setConnectIssue('expired')
+      }
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  function handleDisconnect() {
+    setLinkedInEnabled(false)
+  }
 
   return (
     <div className={`p-4 rounded-xl border-2 transition-all duration-150
@@ -232,20 +256,49 @@ function LinkedInAgentCard() {
 
         <div className="flex items-center gap-2 flex-shrink-0">
           {connected ? (
-            <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-              <MonitorCheck className="w-3.5 h-3.5" />
-              {linkedinAgent.username ? `@${linkedinAgent.username}` : 'Agent live'}
-            </span>
-          ) : linkedinAgent.connected ? (
+            <>
+              <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                <MonitorCheck className="w-3.5 h-3.5" />
+                {linkedinAgent.username ? `@${linkedinAgent.username}` : 'Agent live'}
+              </span>
+              {selected ? (
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  className="btn-secondary text-xs px-3 py-1.5 hover:!text-red-500 dark:hover:!text-red-400 hover:!border-red-300 dark:hover:!border-red-500/30"
+                >
+                  <Unlink className="w-3.5 h-3.5" />
+                  Disconnect
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setLinkedInEnabled(true)}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm"
+                  style={{ backgroundColor: '#0077B5' }}
+                >
+                  <Wifi className="w-3.5 h-3.5" />
+                  Connect
+                </button>
+              )}
+            </>
+          ) : checking ? (
             <span className="flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Starting…
+              Checking…
             </span>
           ) : (
-            <span className="flex items-center gap-1.5 text-xs font-medium text-gray-400 dark:text-slate-500">
-              <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-slate-600" />
-              Not running
-            </span>
+            <button
+              type="button"
+              onClick={handleConnectCheck}
+              disabled={!serverOnline || checking}
+              title={!serverOnline ? 'Start the backend server first' : undefined}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ backgroundColor: '#0077B5' }}
+            >
+              {checking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+              Connect
+            </button>
           )}
         </div>
       </div>
@@ -253,27 +306,62 @@ function LinkedInAgentCard() {
       {connected ? (
         <div className="mt-3 flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 rounded-lg px-3 py-2">
           <MonitorCheck className="w-3.5 h-3.5 flex-shrink-0" />
-          Agent is running locally and ready to scrape. Stop the script to disconnect.
+          {selected
+            ? 'Agent is running locally and LinkedIn is selected for scraping.'
+            : 'Agent is running locally. Click Connect to select LinkedIn for scraping.'}
         </div>
-      ) : (
-        <div className="mt-3 flex items-center justify-between gap-3 rounded-lg border border-gray-200 dark:border-slate-700 bg-gray-50 dark:bg-slate-800/60 px-3 py-2.5">
-          <p className="text-xs text-gray-500 dark:text-slate-400 leading-relaxed">
-            Download the script, then run:&nbsp;
-            <code className="bg-gray-200 dark:bg-slate-700 rounded px-1">python3 linkedin_agent.py --setup</code>
-            &nbsp;once, then&nbsp;
-            <code className="bg-gray-200 dark:bg-slate-700 rounded px-1">python3 linkedin_agent.py</code>
-          </p>
-          <a
-            href={getLinkedInAgentDownloadUrl()}
-            download="linkedin_agent.py"
-            className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white shadow-sm transition-all duration-150 active:scale-95 flex-shrink-0"
-            style={{ backgroundColor: '#0077B5' }}
+      ) : connectIssue ? (
+        <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gradient-to-br from-gray-50 to-white dark:from-slate-900/60 dark:to-slate-800/70 p-3.5">
+          <div className={`flex items-start gap-2.5 rounded-lg px-3 py-2.5
+            ${connectIssue === 'offline'
+              ? 'bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300'
+              : connectIssue === 'expired'
+                ? 'bg-rose-50 text-rose-700 dark:bg-rose-500/10 dark:text-rose-300'
+                : 'bg-blue-50 text-blue-700 dark:bg-blue-500/10 dark:text-blue-300'
+            }`}
           >
-            <Download className="w-3.5 h-3.5" />
-            Download
-          </a>
+            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide">Agent Status</p>
+              <p className="text-xs mt-0.5 leading-relaxed">
+                {connectIssue === 'offline'
+                  ? 'LinkedIn agent script is not running. Start it locally, then click Connect again.'
+                  : 'Script is running, but the LinkedIn session is expired. Restart the script and complete login.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            <p className="text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Quick Setup</p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-slate-200">
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white" style={{ backgroundColor: '#0077B5' }}>1</span>
+                <span>Download the LinkedIn agent script.</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-slate-200">
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white" style={{ backgroundColor: '#0077B5' }}>2</span>
+                <span>Run <code className="bg-gray-200 dark:bg-slate-700 rounded px-1">python3 linkedin_agent.py</code>.</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-slate-200">
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white" style={{ backgroundColor: '#0077B5' }}>3</span>
+                <span>If prompted, log in to LinkedIn in the opened browser window.</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <a
+              href={getLinkedInAgentDownloadUrl()}
+              download="linkedin_agent.py"
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white shadow-sm transition-all duration-150 active:scale-95 flex-shrink-0"
+              style={{ backgroundColor: '#0077B5' }}
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download Agent
+            </a>
+          </div>
         </div>
-      )}
+      ) : null}
     </div>
   )
 }

@@ -18,6 +18,7 @@ const PLATFORM_META: Record<Platform, { label: string; color: string; bg: string
   linkedin:  { label: 'LinkedIn',  color: 'text-[#0077B5]', bg: 'bg-[#0077B5]/10 border-[#0077B5]/25' },
   stepstone: { label: 'StepStone', color: 'text-[#F58220]', bg: 'bg-[#F58220]/10 border-[#F58220]/25' },
   xing:      { label: 'Xing',      color: 'text-[#00B67A]', bg: 'bg-[#00B67A]/10 border-[#00B67A]/25' },
+  indeed:    { label: 'Indeed',    color: 'text-[#2164f3]', bg: 'bg-[#2164f3]/10 border-[#2164f3]/25' },
 }
 
 function ConnectionBar() {
@@ -27,6 +28,7 @@ function ConnectionBar() {
     { platform: 'linkedin',  connected: appState.linkedinConnected },
     { platform: 'stepstone', connected: appState.stepstonConnected },
     { platform: 'xing',      connected: appState.xingConnected },
+    { platform: 'indeed',    connected: appState.indeedConnected },
   ]
 
   const anyConnected = statuses.some((s) => s.connected)
@@ -303,6 +305,7 @@ export default function Dashboard() {
               <option value="linkedin">LinkedIn</option>
               <option value="stepstone">StepStone</option>
               <option value="xing">Xing</option>
+              <option value="indeed">Indeed</option>
             </select>
           </div>
 

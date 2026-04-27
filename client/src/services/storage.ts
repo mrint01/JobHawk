@@ -12,6 +12,7 @@ const DEFAULT_STATE: AppState = {
   linkedinConnected: false,
   stepstonConnected: false,
   xingConnected: false,
+  indeedConnected: false,
 }
 
 export function getAppState(): AppState {

@@ -1,6 +1,7 @@
 import { type FormEvent, useState, useEffect, useRef } from 'react'
 import { Search, MapPin, Briefcase, Info } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import type { Platform } from '../types'
 
 // ── Location autocomplete via Nominatim (OpenStreetMap, free, no key) ─────────
 interface Suggestion {
@@ -147,8 +148,11 @@ export default function ScrapeForm() {
     startScrape({ jobTitle: jobTitle.trim(), location: location.trim() })
   }
 
-  const platformLabels: Record<string, string> = {
-    linkedin: 'LinkedIn', stepstone: 'StepStone', xing: 'Xing',
+  const platformLabels: Record<Platform, string> = {
+    linkedin: 'LinkedIn',
+    stepstone: 'StepStone',
+    xing: 'Xing',
+    indeed: 'Indeed',
   }
 
   return (

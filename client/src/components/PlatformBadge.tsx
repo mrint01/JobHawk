@@ -18,6 +18,11 @@ const META: Record<Platform, { label: string; classes: string; dot: string }> = 
     classes: 'bg-[#00B67A]/10 text-[#008A5C] border-[#00B67A]/25 dark:bg-[#00B67A]/15 dark:text-[#00D48A] dark:border-[#00B67A]/30',
     dot: 'bg-[#00B67A]',
   },
+  indeed: {
+    label: 'Indeed',
+    classes: 'bg-[#2164f3]/10 text-[#1a4fc7] border-[#2164f3]/25 dark:bg-[#2164f3]/15 dark:text-[#5b8cff] dark:border-[#2164f3]/30',
+    dot: 'bg-[#2164f3]',
+  },
 }
 
 export default function PlatformBadge({ platform }: Props) {

@@ -5,6 +5,7 @@ const PLATFORM_META: Record<Platform, { label: string; bg: string }> = {
   linkedin:  { label: 'LinkedIn',  bg: 'bg-[#0077B5]' },
   stepstone: { label: 'StepStone', bg: 'bg-[#F58220]' },
   xing:      { label: 'Xing',      bg: 'bg-[#00B67A]' },
+  indeed:    { label: 'Indeed',    bg: 'bg-[#2164f3]' },
 }
 
 function PlatformRow({ p }: { p: PlatformProgress }) {

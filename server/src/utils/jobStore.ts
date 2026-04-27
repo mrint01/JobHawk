@@ -1,10 +1,20 @@
+import { randomUUID } from 'crypto'
 import { supabase } from './supabase'
 import type { Job, ScrapedJob } from '../scrapers/types'
 
 function normalizeUrl(url: string): string {
   const linkedInMatch = url.match(/https:\/\/www\.linkedin\.com\/jobs\/view\/(\d+)/)
   if (linkedInMatch) return `https://www.linkedin.com/jobs/view/${linkedInMatch[1]}/`
-  try { return new URL(url).origin + new URL(url).pathname } catch { return url }
+  try {
+    const u = new URL(url)
+    if ((u.hostname.includes('indeed.') || u.hostname === 'indeed.com') && u.searchParams.has('jk')) {
+      const jk = u.searchParams.get('jk')
+      if (jk) return `${u.origin}/viewjob?jk=${jk}`
+    }
+    return u.origin + u.pathname
+  } catch {
+    return url
+  }
 }
 
 export async function readJobsForUser(userId: string): Promise<Job[]> {
@@ -37,7 +47,9 @@ export async function mergeJobsForUser(userId: string, incoming: ScrapedJob[]): 
     const key = normalizeUrl(job.url)
     const existingJob = map.get(key)
     if (!existingJob) {
+      // Required: bulk upsert must set `id` or PostgREST may send null and skip DEFAULT gen_random_uuid().
       upserts.push({
+        id: randomUUID(),
         user_id: userId,
         title: job.title,
         company: job.company,

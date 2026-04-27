@@ -7,7 +7,7 @@ import type { Job } from '../types'
 
 export const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
 
-export type PlatformId = 'linkedin' | 'stepstone' | 'xing'
+export type PlatformId = 'linkedin' | 'stepstone' | 'xing' | 'indeed'
 
 export interface ConnectResult {
   ok: boolean

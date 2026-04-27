@@ -204,6 +204,97 @@ const PLATFORM_META: Record<
     color: '#00B67A',
     needsAuth: true,
   },
+  indeed: {
+    label: 'Indeed',
+    description: 'German Indeed — public listings only; no login.',
+    icon: 'Id',
+    color: '#2164f3',
+    needsAuth: false,
+  },
+}
+
+// ── Indeed (opt-in toggle only — no credentials) ─────────────────────────────
+function IndeedCard() {
+  const {
+    appState,
+    connectPlatform,
+    disconnectPlatform,
+    platformConnecting,
+    serverOnline,
+  } = useApp()
+  const meta = PLATFORM_META.indeed
+  const connected = appState.indeedConnected
+  const isConnecting = platformConnecting === 'indeed'
+
+  return (
+    <div className={`p-4 rounded-xl border-2 transition-all duration-150
+      ${connected
+        ? 'border-emerald-200 dark:border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-500/5'
+        : 'border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-800/40'
+      }`}
+    >
+      <div className="flex items-center gap-4">
+        <div
+          className="w-11 h-11 rounded-xl flex items-center justify-center text-white font-bold text-xs flex-shrink-0 shadow-sm"
+          style={{ backgroundColor: meta.color }}
+        >
+          {meta.icon}
+        </div>
+
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{meta.label}</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">{meta.description}</p>
+        </div>
+
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {connected ? (
+            <>
+              <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+                Connected
+              </span>
+              <button
+                type="button"
+                onClick={() => disconnectPlatform('indeed')}
+                className="btn-secondary text-xs px-3 py-1.5 hover:!text-red-500 dark:hover:!text-red-400 hover:!border-red-300 dark:hover:!border-red-500/30"
+              >
+                <Unlink className="w-3.5 h-3.5" />
+                Disconnect
+              </button>
+            </>
+          ) : isConnecting ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Connecting…
+            </span>
+          ) : (
+            <>
+              <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-gray-400 dark:text-slate-500">
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-slate-600" />
+                Not connected
+              </span>
+              <button
+                type="button"
+                onClick={() => connectPlatform('indeed')}
+                disabled={!serverOnline}
+                title={!serverOnline ? 'Start the backend server first' : undefined}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                style={{ backgroundColor: meta.color }}
+              >
+                <Wifi className="w-3.5 h-3.5" />
+                Connect
+              </button>
+            </>
+          )}
+        </div>
+      </div>
+      {!connected && !isConnecting && (
+        <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">
+          Connect enables Indeed Germany (de.indeed.com) in your scrapes — no password or browser window.
+        </p>
+      )}
+    </div>
+  )
 }
 
 // ── LinkedIn Agent Card (local agent required) ────────────────────────────────
@@ -560,12 +651,13 @@ function PlatformSection() {
       title="Platform Connections"
       description={
         authMode === 'manual'
-          ? `Manual browser login mode. ${connectedPlatforms.length}/3 connected.`
-          : `Headless credential mode. ${connectedPlatforms.length}/3 connected.`
+          ? `Manual browser login for StepStone/Xing; LinkedIn uses the agent; Indeed is one-click. ${connectedPlatforms.length} enabled.`
+          : `Headless login for StepStone/Xing; Indeed stays one-click. ${connectedPlatforms.length} enabled.`
       }
     >
       <div className="space-y-3">
         <LinkedInAgentCard />
+        <IndeedCard />
         <PlatformCard platform="stepstone" />
         <PlatformCard platform="xing" />
       </div>

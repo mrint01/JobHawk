@@ -105,6 +105,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           ...s,
           stepstonConnected: result.connectedPlatforms.includes('stepstone'),
           xingConnected: result.connectedPlatforms.includes('xing'),
+          indeedConnected: result.connectedPlatforms.includes('indeed'),
         }))
         if (appState.userId) {
           const agentStatus = await fetchLinkedInAgentStatus(appState.userId)
@@ -135,6 +136,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ...(appState.linkedinConnected ? ['linkedin'] as Platform[] : []),
     ...(appState.stepstonConnected ? ['stepstone'] as Platform[] : []),
     ...(appState.xingConnected ? ['xing'] as Platform[] : []),
+    ...(appState.indeedConnected ? ['indeed'] as Platform[] : []),
   ]
   const newJobs = jobs.filter((j) => j.status === 'new')
   const appliedJobs = jobs.filter((j) => j.status === 'applied')
@@ -195,21 +197,40 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return changePasswordApi(appState.userId, current, next)
   }, [appState.userId])
 
+  const platformLabel = useCallback((p: Platform) => {
+    if (p === 'linkedin') return 'LinkedIn'
+    if (p === 'stepstone') return 'StepStone'
+    if (p === 'indeed') return 'Indeed'
+    return 'Xing'
+  }, [])
+
   const connectPlatform = useCallback(async (p: Platform, payload?: ConnectPayload): Promise<ConnectResult> => {
     setPlatformConnecting(p)
     try {
       const result = await connectPlatformApi(p as PlatformId, payload, appState.userId || undefined)
       if (result.ok) {
-        setAppState((s) => ({ ...s, linkedinConnected: p === 'linkedin' ? true : s.linkedinConnected, stepstonConnected: p === 'stepstone' ? true : s.stepstonConnected, xingConnected: p === 'xing' ? true : s.xingConnected }))
-        addToast(`${p === 'linkedin' ? 'LinkedIn' : p === 'stepstone' ? 'StepStone' : 'Xing'} connected!`, 'success')
+        setAppState((s) => ({
+          ...s,
+          linkedinConnected: p === 'linkedin' ? true : s.linkedinConnected,
+          stepstonConnected: p === 'stepstone' ? true : s.stepstonConnected,
+          xingConnected: p === 'xing' ? true : s.xingConnected,
+          indeedConnected: p === 'indeed' ? true : s.indeedConnected,
+        }))
+        addToast(`${platformLabel(p)} connected!`, 'success')
       } else addToast(result.error ?? 'Connection failed', 'error')
       return result
     } finally { setPlatformConnecting(null) }
-  }, [addToast])
+  }, [addToast, platformLabel])
 
   const disconnectPlatform = useCallback(async (p: Platform) => {
     await disconnectPlatformApi(p as PlatformId, appState.userId || undefined)
-    setAppState((s) => ({ ...s, linkedinConnected: p === 'linkedin' ? false : s.linkedinConnected, stepstonConnected: p === 'stepstone' ? false : s.stepstonConnected, xingConnected: p === 'xing' ? false : s.xingConnected }))
+    setAppState((s) => ({
+      ...s,
+      linkedinConnected: p === 'linkedin' ? false : s.linkedinConnected,
+      stepstonConnected: p === 'stepstone' ? false : s.stepstonConnected,
+      xingConnected: p === 'xing' ? false : s.xingConnected,
+      indeedConnected: p === 'indeed' ? false : s.indeedConnected,
+    }))
   }, [])
 
   const markApplied = useCallback((id: string) => {

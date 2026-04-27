@@ -1,4 +1,4 @@
-export type Platform = 'linkedin' | 'stepstone' | 'xing'
+export type Platform = 'linkedin' | 'stepstone' | 'xing' | 'indeed'
 
 export type JobStatus = 'new' | 'applied'
 
@@ -54,4 +54,5 @@ export interface AppState {
   linkedinConnected: boolean
   stepstonConnected: boolean
   xingConnected: boolean
+  indeedConnected: boolean
 }

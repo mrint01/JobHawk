@@ -19,7 +19,7 @@ import { playwrightCookiesToProtocol } from '../utils/linkedinPlaywrightCookies'
 
 const router = Router()
 const MANUAL_LOGIN_WAIT_MS = 10 * 60 * 1000
-const activeConnectLocks = new Set<'linkedin' | 'stepstone' | 'xing'>()
+const activeConnectLocks = new Set<'linkedin' | 'stepstone' | 'xing' | 'indeed'>()
 
 import { resolveUserId } from '../utils/userStore'
 
@@ -33,7 +33,7 @@ export const AUTH_MODE: 'manual' | 'headless' =
     ? 'manual'
     : 'headless'
 
-type PlatformId = 'linkedin' | 'stepstone' | 'xing'
+type PlatformId = 'linkedin' | 'stepstone' | 'xing' | 'indeed'
 type ManualLoginOutcome = 'success' | 'closed' | 'timeout'
 type ConnectBody = { email?: unknown; password?: unknown; token?: unknown }
 
@@ -875,6 +875,29 @@ router.post('/xing/connect', async (req: Request<unknown, unknown, ConnectBody>,
     res.json(result.ok ? { ok: true, username: creds.email } : result)
   } finally {
     activeConnectLocks.delete('xing')
+  }
+})
+
+/** Indeed — public listings only; “Connect” stores an opt-in flag (no credentials). */
+router.post('/indeed/connect', async (req: Request, res: Response) => {
+  if (activeConnectLocks.has('indeed')) {
+    res.json({ ok: false, error: 'Indeed toggle already in progress. Please wait.' })
+    return
+  }
+  activeConnectLocks.add('indeed')
+  const userId = getUserId(req)
+  try {
+    await saveSession(userId, 'indeed', {
+      cookies: [],
+      loggedInAt: new Date(),
+      username: 'Indeed DE',
+    })
+    res.json({ ok: true, username: 'Indeed DE' })
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    res.json({ ok: false, error: msg })
+  } finally {
+    activeConnectLocks.delete('indeed')
   }
 })
 

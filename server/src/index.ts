@@ -26,6 +26,7 @@ import {
   handleAgentMessage,
   getAgentStatus,
   requestAgentSessionCheck,
+  waitForAgentConnection,
 } from './utils/linkedinAgentHub'
 
 const PORT = Number(process.env.PORT ?? 3001)
@@ -76,6 +77,16 @@ app.get('/api/linkedin/agent-status', (_req, res) => {
 
 app.post('/api/linkedin/agent/check-session', async (_req, res) => {
   const status = await requestAgentSessionCheck()
+  res.json(status)
+})
+
+app.post('/api/linkedin/agent/wake-check', async (_req, res) => {
+  const connected = await waitForAgentConnection(25_000, 1_000)
+  if (!connected.connected) {
+    res.json(connected)
+    return
+  }
+  const status = await requestAgentSessionCheck(10_000)
   res.json(status)
 })
 

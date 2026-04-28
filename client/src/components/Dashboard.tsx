@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Briefcase, CheckSquare, ChevronLeft, ChevronRight, WifiOff, Trash2, ListX } from 'lucide-react'
+import { Briefcase, CheckSquare, ChevronLeft, ChevronRight, WifiOff, Trash2, ListX, Download } from 'lucide-react'
 import type { Platform } from '../types'
 import { useApp } from '../context/AppContext'
 import { formatGermanDateTime } from '../time'
@@ -19,6 +19,7 @@ const PLATFORM_META: Record<Platform, { label: string; color: string; bg: string
   stepstone: { label: 'StepStone', color: 'text-[#F58220]', bg: 'bg-[#F58220]/10 border-[#F58220]/25' },
   xing:      { label: 'Xing',      color: 'text-[#00B67A]', bg: 'bg-[#00B67A]/10 border-[#00B67A]/25' },
   indeed:    { label: 'Indeed',    color: 'text-[#2164f3]', bg: 'bg-[#2164f3]/10 border-[#2164f3]/25' },
+  jobriver:  { label: 'Jobriver',  color: 'text-[#6d28d9]', bg: 'bg-[#6d28d9]/10 border-[#6d28d9]/25' },
 }
 
 function ConnectionBar() {
@@ -29,6 +30,7 @@ function ConnectionBar() {
     { platform: 'stepstone', connected: appState.stepstonConnected },
     { platform: 'xing',      connected: appState.xingConnected },
     { platform: 'indeed',    connected: appState.indeedConnected },
+    { platform: 'jobriver',  connected: appState.jobriverConnected },
   ]
 
   const anyConnected = statuses.some((s) => s.connected)
@@ -130,7 +132,7 @@ function Pagination({
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { newJobs, appliedJobs, scrapeProgress, isScraping, clearJobs, clearJobOffers, appState, isJobsLoading } = useApp()
+  const { newJobs, appliedJobs, pipelineJobs, scrapeProgress, isScraping, clearJobs, clearJobOffers, appState, isJobsLoading } = useApp()
   const [activeTab, setActiveTab] = useState<Tab>('offers')
   const [offersPage, setOffersPage] = useState(1)
   const [appliedPage, setAppliedPage] = useState(1)
@@ -205,6 +207,104 @@ export default function Dashboard() {
   const safePage = Math.min(page, totalPages)
   const displayedJobs = list.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
 
+  const escapeCsvField = (value: string): string => `"${value.replace(/"/g, '""')}"`
+
+  function triggerDownload(filename: string, content: string, mimeType: string): void {
+    const blob = new Blob([content], { type: mimeType })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  function exportAppliedAsCsv(): void {
+    if (appliedFilteredSorted.length === 0) return
+    const headers = ['Title', 'Company', 'Location', 'Platform', 'Status', 'Applied At', 'Posted Date', 'URL']
+    const rows = appliedFilteredSorted.map((job) => ([
+      job.title,
+      job.company,
+      job.location || '',
+      job.platform,
+      job.status,
+      job.appliedAt ?? '',
+      job.postedDate,
+      job.url,
+    ]))
+    const csvContent = [headers, ...rows]
+      .map((row) => row.map((cell) => escapeCsvField(String(cell))).join(','))
+      .join('\n')
+    const intervalToken = getAppliedIntervalToken()
+    triggerDownload(`applied-jobs-${intervalToken}.csv`, csvContent, 'text/csv;charset=utf-8;')
+  }
+
+  function escapeHtml(value: string): string {
+    return value
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;')
+  }
+
+  function exportAppliedAsExcel(): void {
+    if (appliedFilteredSorted.length === 0) return
+    const headers = ['Title', 'Company', 'Location', 'Platform', 'Status', 'Applied At', 'Posted Date', 'URL']
+    const tableRows = appliedFilteredSorted
+      .map((job) => `
+        <tr>
+          <td>${escapeHtml(job.title)}</td>
+          <td>${escapeHtml(job.company)}</td>
+          <td>${escapeHtml(job.location || '')}</td>
+          <td>${escapeHtml(job.platform)}</td>
+          <td>${escapeHtml(job.status)}</td>
+          <td>${escapeHtml(job.appliedAt ?? '')}</td>
+          <td>${escapeHtml(job.postedDate)}</td>
+          <td>${escapeHtml(job.url)}</td>
+        </tr>`)
+      .join('')
+
+    const html = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <style>
+      table { border-collapse: collapse; }
+      th, td { border: 1px solid #d1d5db; padding: 6px 8px; text-align: left; }
+      th { background: #f3f4f6; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <table>
+      <thead>
+        <tr>${headers.map((h) => `<th>${escapeHtml(h)}</th>`).join('')}</tr>
+      </thead>
+      <tbody>${tableRows}</tbody>
+    </table>
+  </body>
+</html>`
+    const intervalToken = getAppliedIntervalToken()
+    triggerDownload(
+      `applied-jobs-${intervalToken}.xls`,
+      html,
+      'application/vnd.ms-excel;charset=utf-8;',
+    )
+  }
+
+  function getAppliedIntervalToken(): string {
+    if (appliedFilteredSorted.length === 0) return new Date().toISOString().slice(0, 10)
+    const times = appliedFilteredSorted
+      .map((job) => getDateRef('applied', job))
+      .filter((t) => Number.isFinite(t) && t > 0)
+      .sort((a, b) => a - b)
+
+    if (times.length === 0) return new Date().toISOString().slice(0, 10)
+    const from = new Date(times[0]).toISOString().slice(0, 10)
+    const to = new Date(times[times.length - 1]).toISOString().slice(0, 10)
+    return `from-${from}_to-${to}`
+  }
+
   function handleTabChange(tab: Tab) {
     setActiveTab(tab)
   }
@@ -262,10 +362,11 @@ export default function Dashboard() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         <StatCard label="Total Scraped" value={newJobs.length + appliedJobs.length} color="blue" />
         <StatCard label="Open Offers"   value={newJobs.length}                       color="violet" />
-        <StatCard label="Applied"       value={appliedJobs.length}                   color="emerald" className="col-span-2 sm:col-span-1" />
+        <StatCard label="Applied"       value={appliedJobs.length}                   color="emerald" />
+        <StatCard label="In Pipeline"   value={pipelineJobs.length}                  color="blue" className="col-span-2 sm:col-span-1" />
       </div>
 
       {/* Tabs */}
@@ -306,6 +407,7 @@ export default function Dashboard() {
               <option value="stepstone">StepStone</option>
               <option value="xing">Xing</option>
               <option value="indeed">Indeed</option>
+              <option value="jobriver">Jobriver</option>
             </select>
           </div>
 
@@ -344,6 +446,43 @@ export default function Dashboard() {
                   value={appliedDateTo}
                   onChange={(e) => setAppliedDateTo(e.target.value)}
                 />
+              </div>
+              <div>
+                <label className="block text-[11px] text-gray-500 dark:text-slate-400 mb-1 opacity-0">Reset</label>
+                <button
+                  onClick={() => {
+                    setAppliedPlatformFilter('all')
+                    setAppliedSortOrder('date_desc')
+                    setAppliedDateFrom('')
+                    setAppliedDateTo('')
+                  }}
+                  className="btn-secondary h-9"
+                  type="button"
+                >
+                  Reset filters
+                </button>
+              </div>
+              <div className="ml-auto flex items-center gap-2">
+                <button
+                  onClick={exportAppliedAsCsv}
+                  disabled={appliedFilteredSorted.length === 0}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg text-emerald-700 dark:text-emerald-300 hover:bg-emerald-50 dark:hover:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/30 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Download applied jobs as CSV"
+                  type="button"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export CSV
+                </button>
+                <button
+                  onClick={exportAppliedAsExcel}
+                  disabled={appliedFilteredSorted.length === 0}
+                  className="flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg text-blue-700 dark:text-blue-300 hover:bg-blue-50 dark:hover:bg-blue-500/10 border border-blue-200 dark:border-blue-500/30 transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Download applied jobs as Excel"
+                  type="button"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  Export Excel
+                </button>
               </div>
             </>
           )}

@@ -1,6 +1,13 @@
-export type Platform = 'linkedin' | 'stepstone' | 'xing' | 'indeed'
+export type Platform = 'linkedin' | 'stepstone' | 'xing' | 'indeed' | 'jobriver'
 
-export type JobStatus = 'new' | 'applied'
+export type JobStatus =
+  | 'new'
+  | 'applied'
+  | 'hr_interview'
+  | 'technical_interview'
+  | 'second_technical_interview'
+  | 'refused'
+  | 'accepted'
 
 export interface Job {
   id: string

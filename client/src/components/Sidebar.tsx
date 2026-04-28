@@ -1,4 +1,4 @@
-import { Briefcase, LayoutDashboard, Settings, LogOut, X, BarChart3, ShieldCheck } from 'lucide-react'
+import { Briefcase, LayoutDashboard, Settings, LogOut, X, BarChart3, ShieldCheck, GitBranch } from 'lucide-react'
 import type { ActivePage } from '../context/AppContext'
 import { useApp } from '../context/AppContext'
 
@@ -77,6 +77,14 @@ export default function Sidebar() {
           >
             <BarChart3 className="w-4 h-4 flex-shrink-0" />
             Analytics
+          </button>
+
+          <button
+            onClick={() => navigate('pipeline')}
+            className={`sidebar-item w-full ${activePage === 'pipeline' ? 'sidebar-item-active' : ''}`}
+          >
+            <GitBranch className="w-4 h-4 flex-shrink-0" />
+            Interview Pipeline
           </button>
           {appState.role === 'admin' && (
             <button

@@ -14,7 +14,7 @@ const API_BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
 
 export type ProgressCallback = (progress: ScrapeProgress) => void
 
-const ALL_PLATFORMS: Platform[] = ['linkedin', 'stepstone', 'xing', 'indeed']
+const ALL_PLATFORMS: Platform[] = ['linkedin', 'stepstone', 'xing', 'indeed', 'jobriver']
 
 function initState(platforms: Platform[]): Record<Platform, PlatformProgress> {
   return {
@@ -22,6 +22,7 @@ function initState(platforms: Platform[]): Record<Platform, PlatformProgress> {
     stepstone: { platform: 'stepstone', status: platforms.includes('stepstone') ? 'pending' : 'idle', progress: 0, jobsFound: 0 },
     xing:      { platform: 'xing',      status: platforms.includes('xing')      ? 'pending' : 'idle', progress: 0, jobsFound: 0 },
     indeed:    { platform: 'indeed',    status: platforms.includes('indeed')    ? 'pending' : 'idle', progress: 0, jobsFound: 0 },
+    jobriver:  { platform: 'jobriver',  status: platforms.includes('jobriver')  ? 'pending' : 'idle', progress: 0, jobsFound: 0 },
   }
 }
 

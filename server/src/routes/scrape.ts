@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express'
 import { scrapeStepStone } from '../scrapers/stepstone'
 import { scrapeXing } from '../scrapers/xing'
 import { scrapeIndeed } from '../scrapers/indeed'
+import { scrapeJobriver } from '../scrapers/jobriver'
 import type { Platform, ScrapedJob, ScrapeEvent, ProgressCallback } from '../scrapers/types'
 import { closeScrapeBrowser } from '../utils/browser'
 import { mergeJobsForUser } from '../utils/jobStore'
@@ -15,7 +16,7 @@ function getUserId(req: Request): string {
 }
 
 function parsePlatforms(raw: string | undefined): Platform[] {
-  const ALL: Platform[] = ['linkedin', 'stepstone', 'xing', 'indeed']
+  const ALL: Platform[] = ['linkedin', 'stepstone', 'xing', 'indeed', 'jobriver']
   if (!raw) return ALL
   return raw.split(',').filter((p): p is Platform => ALL.includes(p as Platform))
 }
@@ -38,6 +39,7 @@ function buildScrapers(platforms: Platform[]): Record<Platform, ScraperFn | null
     stepstone: platforms.includes('stepstone') ? scrapeStepStone : null,
     xing: platforms.includes('xing') ? scrapeXing : null,
     indeed: platforms.includes('indeed') ? scrapeIndeed : null,
+    jobriver: platforms.includes('jobriver') ? scrapeJobriver : null,
   }
 }
 

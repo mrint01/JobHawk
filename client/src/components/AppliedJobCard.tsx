@@ -1,4 +1,4 @@
-import { MapPin, Building2, ExternalLink, RotateCcw, Clock, CalendarCheck, Trash2 } from 'lucide-react'
+import { MapPin, Building2, ExternalLink, RotateCcw, Clock, CalendarCheck, Trash2, ArrowRightCircle } from 'lucide-react'
 import type { Job } from '../types'
 import PlatformBadge from './PlatformBadge'
 import { useApp } from '../context/AppContext'
@@ -6,8 +6,18 @@ import { formatGermanDate, formatPostedTime } from '../time'
 
 interface Props { job: Job }
 
+const STATUS_LABEL: Record<Job['status'], string> = {
+  new: 'New',
+  applied: 'Applied',
+  hr_interview: 'HR Interview',
+  technical_interview: 'Technical Interview',
+  second_technical_interview: 'Second Technical Interview',
+  refused: 'Refused',
+  accepted: 'Accepted',
+}
+
 export default function AppliedJobCard({ job }: Props) {
-  const { markUnapplied, deleteJob } = useApp()
+  const { markUnapplied, deleteJob, updateJobStatus } = useApp()
 
   const postedAgo = formatPostedTime(job.postedDate) || 'time unavailable'
 
@@ -29,6 +39,9 @@ export default function AppliedJobCard({ job }: Props) {
         </span>
         <PlatformBadge platform={job.platform} />
       </div>
+      <span className="badge mb-3 bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 w-fit">
+        Status: {STATUS_LABEL[job.status]}
+      </span>
 
       {/* Title & company */}
       <h3 className="min-h-[2.75rem] font-semibold text-gray-900 dark:text-white text-base leading-snug line-clamp-2 break-words mb-1">
@@ -70,6 +83,15 @@ export default function AppliedJobCard({ job }: Props) {
           <ExternalLink className="w-3.5 h-3.5" />
           View Job
         </a>
+        {job.status === 'applied' && (
+          <button
+            onClick={() => updateJobStatus(job.id, 'hr_interview')}
+            className="btn-primary w-full justify-center"
+          >
+            <ArrowRightCircle className="w-3.5 h-3.5" />
+            Move to HR Interview
+          </button>
+        )}
         <button
           onClick={() => markUnapplied(job.id)}
           className="btn-secondary w-full justify-center hover:!text-amber-600 dark:hover:!text-amber-400"

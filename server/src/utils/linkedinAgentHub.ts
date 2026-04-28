@@ -88,6 +88,16 @@ export function requestAgentSessionCheck(timeoutMs = 8_000): Promise<AgentStatus
   })
 }
 
+export async function waitForAgentConnection(timeoutMs = 20_000, pollMs = 1_000): Promise<AgentStatus> {
+  const started = Date.now()
+  while (Date.now() - started < timeoutMs) {
+    const status = getAgentStatus()
+    if (status.connected) return status
+    await new Promise<void>((resolve) => setTimeout(resolve, pollMs))
+  }
+  return getAgentStatus()
+}
+
 export function dispatchScrapeToAgent(
   params: { keywords: string; location: string; maxJobs: number },
   onProgress: ProgressCallback,

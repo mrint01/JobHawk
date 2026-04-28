@@ -2,7 +2,7 @@ import { Menu, Briefcase } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 
 export default function Navbar() {
-  const { toggleSidebar, newJobs, appliedJobs } = useApp()
+  const { toggleSidebar, newJobs, appliedJobs, pipelineJobs } = useApp()
 
   return (
     <header className="sticky top-0 z-20 border-b border-gray-200 bg-white/80 backdrop-blur-xl dark:border-slate-800 dark:bg-slate-950/80">
@@ -38,6 +38,11 @@ export default function Navbar() {
           <span className="text-gray-500 dark:text-slate-400">
             <span className="text-emerald-600 dark:text-emerald-400 font-semibold">{appliedJobs.length}</span>
             <span className="hidden sm:inline"> applied</span>
+          </span>
+          <span className="text-gray-300 dark:text-slate-600">·</span>
+          <span className="text-gray-500 dark:text-slate-400">
+            <span className="text-blue-600 dark:text-blue-400 font-semibold">{pipelineJobs.length}</span>
+            <span className="hidden sm:inline"> tracking</span>
           </span>
         </div>
       </div>

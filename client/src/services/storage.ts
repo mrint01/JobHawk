@@ -13,6 +13,7 @@ const DEFAULT_STATE: AppState = {
   stepstonConnected: false,
   xingConnected: false,
   indeedConnected: false,
+  jobriverConnected: false,
 }
 
 export function getAppState(): AppState {

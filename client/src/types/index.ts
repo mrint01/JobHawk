@@ -1,6 +1,21 @@
-export type Platform = 'linkedin' | 'stepstone' | 'xing' | 'indeed'
+export type Platform = 'linkedin' | 'stepstone' | 'xing' | 'indeed' | 'jobriver'
 
-export type JobStatus = 'new' | 'applied'
+export type JobStatus =
+  | 'new'
+  | 'applied'
+  | 'hr_interview'
+  | 'technical_interview'
+  | 'second_technical_interview'
+  | 'refused'
+  | 'accepted'
+
+export const PIPELINE_STATUSES: JobStatus[] = [
+  'hr_interview',
+  'technical_interview',
+  'second_technical_interview',
+  'refused',
+  'accepted',
+]
 
 export type Theme = 'dark' | 'light'
 
@@ -55,4 +70,5 @@ export interface AppState {
   stepstonConnected: boolean
   xingConnected: boolean
   indeedConnected: boolean
+  jobriverConnected: boolean
 }

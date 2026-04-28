@@ -3,6 +3,7 @@ import {
   readJobsForUser,
   markAppliedForUser,
   markUnappliedForUser,
+  markStatusForUser,
   clearJobsForUser,
   clearNewJobOffersForUser,
   deleteJobForUser,
@@ -11,8 +12,18 @@ import {
   analyticsAllUsersSeries,
 } from '../utils/jobStore'
 import { isAdmin, resolveUserId } from '../utils/userStore'
+import type { JobStatus } from '../scrapers/types'
 
 const router = Router()
+const ALLOWED_STATUSES = new Set([
+  'new',
+  'applied',
+  'hr_interview',
+  'technical_interview',
+  'second_technical_interview',
+  'refused',
+  'accepted',
+])
 
 function getUserId(req: Request): string {
   return resolveUserId(String(req.header('x-user-id') || 'admin'))
@@ -32,6 +43,15 @@ router.patch('/:id/apply', async (req: Request, res: Response) => {
 
 router.patch('/:id/unapply', async (req: Request, res: Response) => {
   res.json(await markUnappliedForUser(getUserId(req), String(req.params.id)))
+})
+
+router.patch('/:id/status', async (req: Request, res: Response) => {
+  const status = String(req.body?.status ?? '')
+  if (!ALLOWED_STATUSES.has(status)) {
+    res.status(400).json({ error: 'Invalid status' })
+    return
+  }
+  res.json(await markStatusForUser(getUserId(req), String(req.params.id), status as JobStatus))
 })
 
 router.delete('/:id', async (req: Request, res: Response) => {

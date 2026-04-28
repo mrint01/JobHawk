@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
-import type { Job, ScrapeParams, ScrapeProgress, AppState, Platform, Theme } from '../types'
+import type { Job, JobStatus, ScrapeParams, ScrapeProgress, AppState, Platform, Theme } from '../types'
+import { PIPELINE_STATUSES } from '../types'
 import { getAppState, saveAppState } from '../services/storage'
 import { scrapeAll } from '../services/scrapers'
 import {
@@ -9,6 +10,7 @@ import {
   fetchJobsApi,
   markJobAppliedApi,
   markJobUnappliedApi,
+  updateJobStatusApi,
   clearJobsApi,
   clearJobOffersApi,
   deleteJobApi,
@@ -16,14 +18,14 @@ import {
   signupApi,
   changePasswordApi,
   fetchLinkedInAgentStatus,
-  checkLinkedInAgentSession,
+  wakeAndCheckLinkedInAgent,
   type PlatformId,
   type ConnectPayload,
   type ConnectResult,
   type LinkedInAgentStatus,
 } from '../services/api'
 
-export type ActivePage = 'dashboard' | 'settings' | 'analytics' | 'admin'
+export type ActivePage = 'dashboard' | 'pipeline' | 'settings' | 'analytics' | 'admin'
 export interface Toast { id: string; message: string; type: 'success' | 'error' | 'info' }
 
 interface AppContextValue {
@@ -51,8 +53,10 @@ interface AppContextValue {
   jobs: Job[]
   newJobs: Job[]
   appliedJobs: Job[]
+  pipelineJobs: Job[]
   markApplied: (id: string) => void
   markUnapplied: (id: string) => void
+  updateJobStatus: (id: string, status: JobStatus) => void
   deleteJob: (id: string) => Promise<void>
   clearJobs: () => void
   clearJobOffers: () => void
@@ -106,6 +110,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           stepstonConnected: result.connectedPlatforms.includes('stepstone'),
           xingConnected: result.connectedPlatforms.includes('xing'),
           indeedConnected: result.connectedPlatforms.includes('indeed'),
+          jobriverConnected: result.connectedPlatforms.includes('jobriver'),
         }))
         if (appState.userId) {
           const agentStatus = await fetchLinkedInAgentStatus(appState.userId)
@@ -137,9 +142,11 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ...(appState.stepstonConnected ? ['stepstone'] as Platform[] : []),
     ...(appState.xingConnected ? ['xing'] as Platform[] : []),
     ...(appState.indeedConnected ? ['indeed'] as Platform[] : []),
+    ...(appState.jobriverConnected ? ['jobriver'] as Platform[] : []),
   ]
   const newJobs = jobs.filter((j) => j.status === 'new')
-  const appliedJobs = jobs.filter((j) => j.status === 'applied')
+  const appliedJobs = jobs.filter((j) => j.status !== 'new')
+  const pipelineJobs = jobs.filter((j) => PIPELINE_STATUSES.includes(j.status))
   const isScraping = scrapeProgress?.isRunning ?? false
 
   const refreshLinkedInAgent = useCallback(async (forceSessionCheck = false): Promise<LinkedInAgentStatus> => {
@@ -149,7 +156,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       return offline
     }
     const status = forceSessionCheck
-      ? await checkLinkedInAgentSession(appState.userId)
+      ? await wakeAndCheckLinkedInAgent(appState.userId)
       : await fetchLinkedInAgentStatus(appState.userId)
     setLinkedinAgent(status)
     if (!(status.connected && status.hasSession)) {
@@ -201,6 +208,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (p === 'linkedin') return 'LinkedIn'
     if (p === 'stepstone') return 'StepStone'
     if (p === 'indeed') return 'Indeed'
+    if (p === 'jobriver') return 'Jobriver'
     return 'Xing'
   }, [])
 
@@ -215,6 +223,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           stepstonConnected: p === 'stepstone' ? true : s.stepstonConnected,
           xingConnected: p === 'xing' ? true : s.xingConnected,
           indeedConnected: p === 'indeed' ? true : s.indeedConnected,
+          jobriverConnected: p === 'jobriver' ? true : s.jobriverConnected,
         }))
         addToast(`${platformLabel(p)} connected!`, 'success')
       } else addToast(result.error ?? 'Connection failed', 'error')
@@ -230,6 +239,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       stepstonConnected: p === 'stepstone' ? false : s.stepstonConnected,
       xingConnected: p === 'xing' ? false : s.xingConnected,
       indeedConnected: p === 'indeed' ? false : s.indeedConnected,
+      jobriverConnected: p === 'jobriver' ? false : s.jobriverConnected,
     }))
   }, [])
 
@@ -243,6 +253,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!appState.userId) return
     markJobUnappliedApi(id, appState.userId).then((updated) => { if (updated.length > 0) setJobs(updated) }).catch(() => undefined)
     setJobs((prev) => prev.map((j) => j.id === id ? { ...j, status: 'new' as const, appliedAt: undefined } : j))
+  }, [appState.userId])
+
+  const updateJobStatus = useCallback((id: string, status: JobStatus) => {
+    if (!appState.userId) return
+    updateJobStatusApi(id, status, appState.userId).then((updated) => {
+      if (updated.length > 0) setJobs(updated)
+    }).catch(() => undefined)
+    setJobs((prev) =>
+      prev.map((j) => {
+        if (j.id !== id) return j
+        const nextAppliedAt =
+          status === 'new' ? undefined : (j.appliedAt ?? new Date().toISOString())
+        return { ...j, status, appliedAt: nextAppliedAt }
+      }),
+    )
   }, [appState.userId])
 
   const deleteJob = useCallback(async (id: string): Promise<void> => {
@@ -285,7 +310,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       activePage, setActivePage, sidebarOpen, setSidebarOpen, toggleSidebar,
       connectPlatform, disconnectPlatform, connectedPlatforms, platformConnecting,
       linkedinAgent, refreshLinkedInAgent, setLinkedInEnabled,
-      jobs, newJobs, appliedJobs, isJobsLoading, markApplied, markUnapplied, deleteJob, clearJobs, clearJobOffers,
+      jobs, newJobs, appliedJobs, pipelineJobs, isJobsLoading, markApplied, markUnapplied, updateJobStatus, deleteJob, clearJobs, clearJobOffers,
       scrapeProgress, isScraping, startScrape, toasts, addToast, removeToast,
     }}>
       {children}

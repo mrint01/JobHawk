@@ -23,6 +23,11 @@ const META: Record<Platform, { label: string; classes: string; dot: string }> = 
     classes: 'bg-[#2164f3]/10 text-[#1a4fc7] border-[#2164f3]/25 dark:bg-[#2164f3]/15 dark:text-[#5b8cff] dark:border-[#2164f3]/30',
     dot: 'bg-[#2164f3]',
   },
+  jobriver: {
+    label: 'Jobriver',
+    classes: 'bg-[#6d28d9]/10 text-[#5b21b6] border-[#6d28d9]/25 dark:bg-[#6d28d9]/15 dark:text-[#a78bfa] dark:border-[#6d28d9]/30',
+    dot: 'bg-[#6d28d9]',
+  },
 }
 
 export default function PlatformBadge({ platform }: Props) {

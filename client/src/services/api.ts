@@ -3,11 +3,11 @@
  * In dev: Vite proxies /api → localhost:3001
  * In prod: VITE_API_URL is set to the Railway backend URL
  */
-import type { Job } from '../types'
+import type { Job, JobStatus } from '../types'
 
 export const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? ''
 
-export type PlatformId = 'linkedin' | 'stepstone' | 'xing' | 'indeed'
+export type PlatformId = 'linkedin' | 'stepstone' | 'xing' | 'indeed' | 'jobriver'
 
 export interface ConnectResult {
   ok: boolean
@@ -109,6 +109,20 @@ export async function markJobAppliedApi(id: string, userId?: string): Promise<Jo
 export async function markJobUnappliedApi(id: string, userId?: string): Promise<Job[]> {
   try {
     const res = await fetch(`${BASE}/api/jobs/${id}/unapply`, { method: 'PATCH', headers: userHeaders(userId) })
+    if (!res.ok) return []
+    return await res.json() as Job[]
+  } catch {
+    return []
+  }
+}
+
+export async function updateJobStatusApi(id: string, status: JobStatus, userId?: string): Promise<Job[]> {
+  try {
+    const res = await fetch(`${BASE}/api/jobs/${id}/status`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...userHeaders(userId) },
+      body: JSON.stringify({ status }),
+    })
     if (!res.ok) return []
     return await res.json() as Job[]
   } catch {
@@ -265,6 +279,20 @@ export async function checkLinkedInAgentSession(userId: string): Promise<LinkedI
       method: 'POST',
       headers: userHeaders(userId),
       signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return { connected: false, hasSession: false, username: '' }
+    return await res.json() as LinkedInAgentStatus
+  } catch {
+    return { connected: false, hasSession: false, username: '' }
+  }
+}
+
+export async function wakeAndCheckLinkedInAgent(userId: string): Promise<LinkedInAgentStatus> {
+  try {
+    const res = await fetch(`${BASE}/api/linkedin/agent/wake-check`, {
+      method: 'POST',
+      headers: userHeaders(userId),
+      signal: AbortSignal.timeout(40_000),
     })
     if (!res.ok) return { connected: false, hasSession: false, username: '' }
     return await res.json() as LinkedInAgentStatus

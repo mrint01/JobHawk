@@ -37,6 +37,9 @@ import uuid
 import signal
 import logging
 import argparse
+import random
+from urllib.request import urlopen
+from urllib.error import URLError, HTTPError
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict
@@ -58,6 +61,9 @@ DEFAULT_BACKEND_URL = "https://jobhawk-server-production.up.railway.app"
 
 HEARTBEAT_INTERVAL = 25
 RECONNECT_DELAY = 5
+MAX_RECONNECT_DELAY = 60
+OPEN_TIMEOUT_SECONDS = 45
+WAKE_TIMEOUT_SECONDS = 12
 MAX_JOBS = 100
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
@@ -306,6 +312,7 @@ class LinkedInAgent:
         self.context: Optional[BrowserContext] = None
         self.has_session = False
         self.running = True
+        self.reconnect_delay = RECONNECT_DELAY
 
     async def _open_context(self, playwright, headless: bool):
         return await playwright.chromium.launch_persistent_context(
@@ -369,8 +376,9 @@ class LinkedInAgent:
 
     async def _ws_loop(self):
         log.info(f"Connecting to {self.ws_url}")
-        async with websockets.connect(self.ws_url, ping_interval=None, close_timeout=10, open_timeout=15) as ws:
+        async with websockets.connect(self.ws_url, ping_interval=None, close_timeout=10, open_timeout=OPEN_TIMEOUT_SECONDS) as ws:
             log.info("✅  Connected to backend")
+            self.reconnect_delay = RECONNECT_DELAY
             await ws.send(json.dumps({"type": "hello", "hasSession": self.has_session, "version": VERSION}))
 
             async def heartbeat():
@@ -399,6 +407,14 @@ class LinkedInAgent:
                         await ws.send(json.dumps({"type": "session_status", "hasSession": ok}))
             finally:
                 hb.cancel()
+
+    async def _wake_backend(self):
+        url = f"{self.backend_url}/api/ping"
+        try:
+            await asyncio.to_thread(lambda: urlopen(url, timeout=WAKE_TIMEOUT_SECONDS).read(64))
+        except (URLError, HTTPError, TimeoutError, OSError):
+            # It's okay if this fails; WS connect may still work.
+            pass
 
     async def run(self):
         PROFILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -432,13 +448,20 @@ class LinkedInAgent:
 
             while self.running:
                 try:
+                    await self._wake_backend()
                     await self._ws_loop()
                 except (websockets.exceptions.ConnectionClosed, websockets.exceptions.InvalidURI, OSError) as e:
-                    log.warning(f"Connection lost ({e}). Reconnecting in {RECONNECT_DELAY}s...")
-                    await asyncio.sleep(RECONNECT_DELAY)
+                    log.warning(f"Connection lost ({e}). Reconnecting in {self.reconnect_delay}s...")
+                    await asyncio.sleep(self.reconnect_delay + random.uniform(0, 1.5))
+                    self.reconnect_delay = min(MAX_RECONNECT_DELAY, self.reconnect_delay * 2)
+                except TimeoutError:
+                    log.warning(f"Opening handshake timed out. Reconnecting in {self.reconnect_delay}s...")
+                    await asyncio.sleep(self.reconnect_delay + random.uniform(0, 1.5))
+                    self.reconnect_delay = min(MAX_RECONNECT_DELAY, self.reconnect_delay * 2)
                 except Exception as e:
-                    log.error(f"Unexpected error: {e}. Reconnecting in {RECONNECT_DELAY}s...")
-                    await asyncio.sleep(RECONNECT_DELAY)
+                    log.error(f"Unexpected error: {e}. Reconnecting in {self.reconnect_delay}s...")
+                    await asyncio.sleep(self.reconnect_delay + random.uniform(0, 1.5))
+                    self.reconnect_delay = min(MAX_RECONNECT_DELAY, self.reconnect_delay * 2)
 
             await browser.close()
 

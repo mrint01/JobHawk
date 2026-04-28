@@ -153,6 +153,7 @@ export default function ScrapeForm() {
     stepstone: 'StepStone',
     xing: 'Xing',
     indeed: 'Indeed',
+    jobriver: 'Jobriver',
   }
 
   return (

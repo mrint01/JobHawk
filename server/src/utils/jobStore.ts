@@ -2,6 +2,22 @@ import { randomUUID } from 'crypto'
 import { supabase } from './supabase'
 import type { Job, ScrapedJob } from '../scrapers/types'
 
+const APPLICATION_STATUSES: Job['status'][] = [
+  'applied',
+  'hr_interview',
+  'technical_interview',
+  'second_technical_interview',
+  'refused',
+  'accepted',
+]
+
+const AUTO_REFUSE_ELIGIBLE_STATUSES: Job['status'][] = [
+  'applied',
+  'hr_interview',
+  'technical_interview',
+  'second_technical_interview',
+]
+
 function normalizeUrl(url: string): string {
   const linkedInMatch = url.match(/https:\/\/www\.linkedin\.com\/jobs\/view\/(\d+)/)
   if (linkedInMatch) return `https://www.linkedin.com/jobs/view/${linkedInMatch[1]}/`
@@ -11,6 +27,12 @@ function normalizeUrl(url: string): string {
       const jk = u.searchParams.get('jk')
       if (jk) return `${u.origin}/viewjob?jk=${jk}`
     }
+    if (u.hostname === 'jobriver.de') {
+      const hashMatch = (u.hash || '').match(/^#job-(\d+)/)
+      if (hashMatch) return `${u.origin}/jobs/#job-${hashMatch[1]}`
+      const pathMatch = u.pathname.match(/^\/jobs\/(.+)/)
+      if (pathMatch) return `${u.origin}/jobs/${pathMatch[1]}`
+    }
     return u.origin + u.pathname
   } catch {
     return url
@@ -18,12 +40,23 @@ function normalizeUrl(url: string): string {
 }
 
 export async function readJobsForUser(userId: string): Promise<Job[]> {
+  await autoRefuseExpiredApplicationsForUser(userId)
   const { data } = await supabase
     .from('jobs')
     .select('*')
     .eq('user_id', userId)
     .order('posted_date', { ascending: false, nullsFirst: false })
   return (data ?? []).map(dbRowToJob)
+}
+
+async function autoRefuseExpiredApplicationsForUser(userId: string): Promise<void> {
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  await supabase
+    .from('jobs')
+    .update({ status: 'refused' })
+    .eq('user_id', userId)
+    .in('status', AUTO_REFUSE_ELIGIBLE_STATUSES)
+    .lt('applied_at', cutoff)
 }
 
 function safeDate(val: string | undefined | null): string | null {
@@ -114,6 +147,26 @@ export async function markUnappliedForUser(userId: string, id: string): Promise<
   return readJobsForUser(userId)
 }
 
+export async function markStatusForUser(userId: string, id: string, status: Job['status']): Promise<Job[]> {
+  const { data: current } = await supabase
+    .from('jobs')
+    .select('applied_at')
+    .eq('id', id)
+    .eq('user_id', userId)
+    .maybeSingle()
+
+  const currentAppliedAt = current?.applied_at as string | null | undefined
+  const nextAppliedAt =
+    status === 'new' ? null : (currentAppliedAt ?? new Date().toISOString())
+
+  await supabase
+    .from('jobs')
+    .update({ status, applied_at: nextAppliedAt })
+    .eq('id', id)
+    .eq('user_id', userId)
+  return readJobsForUser(userId)
+}
+
 export async function clearJobsForUser(userId: string): Promise<void> {
   await supabase.from('jobs').delete().eq('user_id', userId)
 }
@@ -138,7 +191,7 @@ export async function analyticsByUser(userId: string, from: Date): Promise<Analy
     .from('jobs')
     .select('applied_at')
     .eq('user_id', userId)
-    .eq('status', 'applied')
+    .in('status', APPLICATION_STATUSES)
     .gte('applied_at', from.toISOString())
   return buildBuckets((data ?? []).map((r) => r.applied_at as string))
 }
@@ -147,7 +200,7 @@ export async function analyticsAllUsersSeries(from: Date): Promise<AnalyticsBuck
   const { data } = await supabase
     .from('jobs')
     .select('applied_at')
-    .eq('status', 'applied')
+    .in('status', APPLICATION_STATUSES)
     .gte('applied_at', from.toISOString())
   return buildBuckets((data ?? []).map((r) => r.applied_at as string))
 }
@@ -156,7 +209,7 @@ export async function analyticsAllUsers(
   from: Date,
   to?: Date | null,
 ): Promise<Array<{ userId: string; username: string; appliedCount: number }>> {
-  let query = supabase.from('jobs').select('user_id').eq('status', 'applied').gte('applied_at', from.toISOString())
+  let query = supabase.from('jobs').select('user_id').in('status', APPLICATION_STATUSES).gte('applied_at', from.toISOString())
   if (to) query = query.lte('applied_at', to.toISOString())
   const [{ data: jobs }, { data: users }] = await Promise.all([
     query,

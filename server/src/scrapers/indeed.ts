@@ -1,11 +1,11 @@
 /**
- * Indeed scraper (default: de.indeed.com) — public listings via Puppeteer + stealth.
+ * Indeed scraper (default: de.indeed.com) — public listings via Playwright WebKit.
  *
  * Opt-in in Settings → Indeed → Connect stores a marker session only (no login).
  * Scrolls the results list inside the page shell (inner scrollbar), matching LinkedIn-style UX.
  */
-import type { Page } from 'puppeteer'
-import { getBrowserPage, jitter, sleep } from '../utils/browser'
+import { webkit, type Browser, type BrowserContext, type Page } from 'playwright'
+import { jitter, sleep } from '../utils/browser'
 import { nanoid } from '../utils/nanoid'
 import { subMinutes, subHours, subDays, subWeeks, parseISO, isValid } from 'date-fns'
 import { getSession } from '../utils/sessions'
@@ -87,9 +87,10 @@ async function tryDismissConsent(page: Page): Promise<void> {
     'button[aria-label*="Accept"]',
   ]
   for (const sel of selectors) {
-    const handle = await page.$(sel).catch(() => null)
-    if (handle) {
-      await handle.click().catch(() => undefined)
+    const locator = page.locator(sel).first()
+    const count = await locator.count().catch(() => 0)
+    if (count > 0) {
+      await locator.click({ timeout: 1200 }).catch(() => undefined)
       await sleep(400)
       break
     }
@@ -363,10 +364,20 @@ export async function scrapeIndeed(
 
   onProgress({ type: 'progress', platform: 'indeed', progress: 5 })
 
+  let browser: Browser | null = null
+  let context: BrowserContext | null = null
   let page: Page | null = null
   try {
-    page = await getBrowserPage(false)
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8' })
+    browser = await webkit.launch({ headless: process.env.PUPPETEER_HEADLESS !== 'false' })
+    context = await browser.newContext({
+      userAgent:
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15',
+      viewport: { width: 1280, height: 800 },
+      locale: 'de-DE',
+      extraHTTPHeaders: { 'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8' },
+      ignoreHTTPSErrors: true,
+    })
+    page = await context.newPage()
 
     const url = buildIndeedSearchUrl(jobTitle, location)
     const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
@@ -450,5 +461,7 @@ export async function scrapeIndeed(
     return []
   } finally {
     if (page) await page.close().catch(() => undefined)
+    if (context) await context.close().catch(() => undefined)
+    if (browser) await browser.close().catch(() => undefined)
   }
 }

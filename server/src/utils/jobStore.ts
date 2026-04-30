@@ -192,26 +192,32 @@ export interface AnalyticsCityBucket {
 }
 
 export async function analyticsByUser(userId: string, from: Date, city?: string): Promise<AnalyticsBucket[]> {
-  let query = supabase
+  const { data } = await supabase
     .from('jobs')
-    .select('applied_at')
+    .select('applied_at, location')
     .eq('user_id', userId)
     .in('status', APPLICATION_STATUSES)
     .gte('applied_at', from.toISOString())
-  if (city) query = query.ilike('location', `${city}%`)
-  const { data } = await query
-  return buildBuckets((data ?? []).map((r) => r.applied_at as string))
+  const targetCity = city ? normalizeCity(city) : ''
+  return buildBuckets(
+    (data ?? [])
+      .filter((r) => !targetCity || normalizeCity(r.location as string | null | undefined) === targetCity)
+      .map((r) => r.applied_at as string),
+  )
 }
 
 export async function analyticsAllUsersSeries(from: Date, city?: string): Promise<AnalyticsBucket[]> {
-  let query = supabase
+  const { data } = await supabase
     .from('jobs')
-    .select('applied_at')
+    .select('applied_at, location')
     .in('status', APPLICATION_STATUSES)
     .gte('applied_at', from.toISOString())
-  if (city) query = query.ilike('location', `${city}%`)
-  const { data } = await query
-  return buildBuckets((data ?? []).map((r) => r.applied_at as string))
+  const targetCity = city ? normalizeCity(city) : ''
+  return buildBuckets(
+    (data ?? [])
+      .filter((r) => !targetCity || normalizeCity(r.location as string | null | undefined) === targetCity)
+      .map((r) => r.applied_at as string),
+  )
 }
 
 export async function analyticsCitiesByUser(userId: string, from: Date): Promise<AnalyticsCityBucket[]> {
@@ -273,7 +279,37 @@ function buildCityBuckets(locations: Array<string | null | undefined>): Analytic
 
 function normalizeCity(location: string | null | undefined): string {
   if (!location) return ''
-  return location.split(',')[0]?.trim() ?? ''
+  const head = location
+    .split(',')[0]
+    ?.replace(/\+\s*\d+\s+weitere$/i, '')
+    .replace(/\([^)]*\)/g, '')
+    .trim() ?? ''
+  if (!head) return ''
+
+  const folded = head
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .toLowerCase()
+
+  const aliases: Record<string, string> = {
+    koln: 'Cologne',
+    koeln: 'Cologne',
+    cologne: 'Cologne',
+    dusseldorf: 'Dusseldorf',
+    duesseldorf: 'Dusseldorf',
+    dortmund: 'Dortmund',
+    essen: 'Essen',
+    wuppertal: 'Wuppertal',
+    berlin: 'Berlin',
+    munchen: 'Munich',
+    muenchen: 'Munich',
+    munich: 'Munich',
+    hamburg: 'Hamburg',
+    frankfurt: 'Frankfurt',
+    stuttgart: 'Stuttgart',
+  }
+  return aliases[folded] ?? head
 }
 
 function dbRowToJob(row: Record<string, unknown>): Job {

@@ -234,7 +234,7 @@ export default function AnalyticsPage() {
             <p className="text-sm text-gray-500 dark:text-slate-400">No city data available.</p>
           ) : (
             <div className="space-y-2">
-              {cityBuckets.slice(0, 10).map((bucket) => (
+              {cityBuckets.map((bucket) => (
                 <div key={bucket.city} className="flex items-center justify-between text-sm">
                   <span className="text-gray-700 dark:text-slate-300">{bucket.city}</span>
                   <span className="font-semibold text-gray-900 dark:text-white tabular-nums">{bucket.appliedCount}</span>

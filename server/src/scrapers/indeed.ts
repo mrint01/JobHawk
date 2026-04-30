@@ -1,25 +1,18 @@
 /**
- * Indeed scraper (default: de.indeed.com) — public listings via Playwright Firefox.
+ * Indeed scraper (default: de.indeed.com) — public listings via Puppeteer + stealth.
  *
  * Opt-in in Settings → Indeed → Connect stores a marker session only (no login).
  * Scrolls the results list inside the page shell (inner scrollbar), matching LinkedIn-style UX.
  */
-import { firefox, type Browser, type BrowserContext, type Page } from 'playwright'
-import { jitter, sleep } from '../utils/browser'
+import type { Page } from 'puppeteer'
+import { getBrowserPage, jitter, sleep } from '../utils/browser'
 import { nanoid } from '../utils/nanoid'
 import { subMinutes, subHours, subDays, subWeeks, parseISO, isValid } from 'date-fns'
-import { getSession, saveSession } from '../utils/sessions'
+import { getSession } from '../utils/sessions'
 import type { ScrapedJob, ProgressCallback } from './types'
 import { limitScrapedJobs, SCRAPE_JOBS_PER_PLATFORM_LIMIT } from './limits'
 
 const INDEED_BASE = (process.env.INDEED_BASE_URL ?? 'https://de.indeed.com').replace(/\/$/, '')
-const INDEED_BLOCK_COOLDOWN_MS = 10 * 60 * 1000
-const indeedBlockedUntilByUser = new Map<string, number>()
-const HEADLESS = process.env.PUPPETEER_HEADLESS !== 'false'
-const MANUAL_CAPTCHA_WAIT_MS = 10 * 60 * 1000
-let indeedFirefoxBrowser: Browser | null = null
-let indeedFirefoxContext: BrowserContext | null = null
-let indeedFirefoxContextLaunching: Promise<BrowserContext> | null = null
 
 const CONTRACT_TOKENS_DE = [
   'Vollzeit',
@@ -41,190 +34,15 @@ const CONTRACT_TOKENS_DE = [
   'Hybrides Arbeiten',
 ]
 
-async function getIndeedFirefoxContext(): Promise<BrowserContext> {
-  if (indeedFirefoxContext) return indeedFirefoxContext
-  if (!indeedFirefoxContextLaunching) {
-    indeedFirefoxContextLaunching = (async () => {
-      indeedFirefoxBrowser = await firefox.launch({
-        headless: HEADLESS,
-        firefoxUserPrefs: {
-          'dom.webdriver.enabled': false,
-        },
-      })
-      indeedFirefoxContext = await indeedFirefoxBrowser.newContext({
-        userAgent:
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0',
-        viewport: { width: 1280, height: 800 },
-        locale: 'de-DE',
-        ignoreHTTPSErrors: true,
-        extraHTTPHeaders: {
-          'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
-          'Upgrade-Insecure-Requests': '1',
-          'Cache-Control': 'max-age=0',
-        },
-      })
-      await indeedFirefoxContext.addInitScript(() => {
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined })
-      })
-      return indeedFirefoxContext
-    })()
-  }
-  indeedFirefoxContext = await indeedFirefoxContextLaunching
-  indeedFirefoxContextLaunching = null
-  return indeedFirefoxContext
-}
-
-async function getIndeedFirefoxPage(): Promise<Page> {
-  const ctx = await getIndeedFirefoxContext()
-  return ctx.newPage()
-}
-
-function protocolCookiesToPlaywrightForIndeed(
-  cookies: Array<{
-    name?: string
-    value?: string
-    domain?: string
-    path?: string
-    secure?: boolean
-    httpOnly?: boolean
-    expires?: number
-    sameSite?: string
-  }>,
-) {
-  return cookies
-    .filter((c) => c?.name && c?.value != null)
-    .map((c) => ({
-      name: String(c.name),
-      value: String(c.value),
-      domain: c.domain && String(c.domain).includes('indeed') ? String(c.domain) : '.indeed.com',
-      path: c.path && c.path.length > 0 ? c.path : '/',
-      secure: c.secure !== false,
-      httpOnly: !!c.httpOnly,
-      ...(typeof c.expires === 'number' && c.expires > 0 ? { expires: c.expires } : {}),
-      ...(c.sameSite === 'Strict' || c.sameSite === 'Lax' || c.sameSite === 'None'
-        ? { sameSite: c.sameSite as 'Strict' | 'Lax' | 'None' }
-        : {}),
-    }))
-}
-
-function playwrightCookiesToProtocolForIndeed(
-  cookies: Array<{
-    name: string
-    value: string
-    domain: string
-    path: string
-    secure: boolean
-    httpOnly: boolean
-    expires: number
-    sameSite?: 'Strict' | 'Lax' | 'None'
-  }>,
-) {
-  return cookies.map((c) => ({
-    name: c.name,
-    value: c.value,
-    domain: c.domain && c.domain.includes('indeed') ? c.domain : '.indeed.com',
-    path: c.path && c.path.length > 0 ? c.path : '/',
-    secure: c.secure !== false,
-    httpOnly: !!c.httpOnly,
-    ...(typeof c.expires === 'number' && c.expires > 0 ? { expires: c.expires } : {}),
-    ...(c.sameSite ? { sameSite: c.sameSite } : {}),
-  }))
-}
-
-function buildIndeedSearchUrl(jobTitle: string, location: string, opts?: { recentOnly?: boolean }): string {
-  const params = new URLSearchParams({ q: jobTitle.trim() })
-  if (opts?.recentOnly) {
-    params.set('sort', 'date')
-    params.set('fromage', 'last')
-  }
+function buildIndeedSearchUrl(jobTitle: string, location: string): string {
+  const params = new URLSearchParams({
+    q: jobTitle.trim(),
+    sort: 'date',
+    fromage: 'last',
+  })
   const loc = location.trim()
   if (loc) params.set('l', loc)
   return `${INDEED_BASE}/jobs?${params.toString()}`
-}
-
-async function openIndeedSearch(page: Page, jobTitle: string, location: string): Promise<void> {
-  // Warm-up homepage first to establish cookies/session before opening search.
-  await page.goto(`${INDEED_BASE}/`, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-  await sleep(900)
-  await tryDismissConsent(page)
-  await sleep(500)
-
-  const urls = [
-    buildIndeedSearchUrl(jobTitle, location, { recentOnly: false }),
-    buildIndeedSearchUrl(jobTitle, location, { recentOnly: true }),
-  ]
-  let lastStatus = 0
-  for (let i = 0; i < urls.length; i++) {
-    try {
-      const response = await page.goto(urls[i], {
-        waitUntil: 'domcontentloaded',
-        timeout: 45_000,
-        referer: `${INDEED_BASE}/`,
-      })
-      const status = response?.status() ?? 0
-      lastStatus = status
-      if (status > 0 && status < 400) return
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err)
-      // Playwright can throw when navigation auto-redirects while goto is in flight.
-      if (/interrupted by another navigation/i.test(msg)) {
-        await page.waitForLoadState('domcontentloaded', { timeout: 25_000 }).catch(() => undefined)
-        const current = page.url()
-        if (current.includes('/jobs')) return
-      } else {
-        throw err
-      }
-    }
-    await jitter(1200, 2200)
-  }
-  throw new Error(`Indeed returned HTTP ${lastStatus || 403}`)
-}
-
-async function isIndeedChallengePage(page: Page): Promise<boolean> {
-  const url = page.url().toLowerCase()
-  if (url.includes('challenge') || url.includes('captcha') || url.includes('cloudflare')) return true
-  const text = (await page.textContent('body').catch(() => '') ?? '').toLowerCase()
-  return (
-    text.includes('zusätzliche verifizierung erforderlich') ||
-    text.includes('additional verification required') ||
-    text.includes('cloudflare') ||
-    text.includes('ray-id') ||
-    text.includes('captcha')
-  )
-}
-
-async function waitForManualIndeedCaptchaSolve(page: Page, onProgress: ProgressCallback): Promise<void> {
-  const started = Date.now()
-  onProgress({
-    type: 'error',
-    platform: 'indeed',
-    error: 'Indeed captcha detected. Please solve it in the opened Firefox window; scraping will resume automatically.',
-  })
-  while (Date.now() - started < MANUAL_CAPTCHA_WAIT_MS) {
-    if (page.isClosed()) throw new Error('Indeed captcha window was closed before verification completed.')
-    await sleep(2000)
-    const stillChallenge = await isIndeedChallengePage(page)
-    if (!stillChallenge) return
-  }
-  throw new Error('Timed out waiting for manual Indeed captcha solve.')
-}
-
-async function waitForIndeedResultsVisible(page: Page): Promise<void> {
-  const started = Date.now()
-  const maxMs = 45_000
-  while (Date.now() - started < maxMs) {
-    if (page.isClosed()) throw new Error('Indeed page closed before job list became visible.')
-    const hasJobs = await page.evaluate(() => {
-      return !!(
-        document.querySelector('[data-jk]') ||
-        document.querySelector('#mosaic-provider-jobcards') ||
-        document.querySelector('[data-testid="jobs-search-results-list"]')
-      )
-    }).catch(() => false)
-    if (hasJobs) return
-    await sleep(1200)
-  }
-  throw new Error('Indeed job list did not appear after captcha solve.')
 }
 
 function parseIndeedDateSnippet(raw: string): string {
@@ -269,14 +87,25 @@ async function tryDismissConsent(page: Page): Promise<void> {
     'button[aria-label*="Accept"]',
   ]
   for (const sel of selectors) {
-    const locator = page.locator(sel).first()
-    const count = await locator.count().catch(() => 0)
-    if (count > 0) {
-      await locator.click({ timeout: 1200 }).catch(() => undefined)
+    const handle = await page.$(sel).catch(() => null)
+    if (handle) {
+      await handle.click().catch(() => undefined)
       await sleep(400)
       break
     }
   }
+}
+
+async function isIndeedCaptchaChallenge(page: Page): Promise<boolean> {
+  const url = page.url().toLowerCase()
+  if (url.includes('captcha') || url.includes('challenge') || url.includes('cloudflare')) return true
+  const body = (await page.evaluate(() => document.body?.innerText || '').catch(() => '')).toLowerCase()
+  return (
+    body.includes('additional verification required') ||
+    body.includes('zusätzliche verifizierung erforderlich') ||
+    body.includes('ray-id') ||
+    body.includes('cloudflare')
+  )
 }
 
 type IndeedScrollState = {
@@ -523,11 +352,6 @@ export async function scrapeIndeed(
   onProgress: ProgressCallback,
   userId = 'admin',
 ): Promise<ScrapedJob[]> {
-  const blockedUntil = indeedBlockedUntilByUser.get(userId) ?? 0
-  if (blockedUntil > Date.now()) {
-    return []
-  }
-
   if (!getSession(userId, 'indeed')) {
     onProgress({
       type: 'error',
@@ -540,24 +364,19 @@ export async function scrapeIndeed(
   onProgress({ type: 'progress', platform: 'indeed', progress: 5 })
 
   let page: Page | null = null
-  let keepPageOpen = false
   try {
-    page = await getIndeedFirefoxPage()
-    const session = getSession(userId, 'indeed')
-    if (session?.cookies?.length) {
-      await page.context().addCookies(protocolCookiesToPlaywrightForIndeed(session.cookies)).catch(() => undefined)
+    page = await getBrowserPage(false)
+    await page.setExtraHTTPHeaders({ 'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8' })
+
+    const url = buildIndeedSearchUrl(jobTitle, location)
+    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
+    const status = response?.status() ?? 0
+    const captchaDetected = await isIndeedCaptchaChallenge(page)
+    if (captchaDetected) {
+      throw new Error('Indeed has captcha/challenge right now. Please wait and try again later.')
     }
-    await openIndeedSearch(page, jobTitle, location)
-    if (!HEADLESS && await isIndeedChallengePage(page)) {
-      keepPageOpen = true
-      await waitForManualIndeedCaptchaSolve(page, onProgress)
-      await page.goto(buildIndeedSearchUrl(jobTitle, location, { recentOnly: false }), {
-        waitUntil: 'domcontentloaded',
-        timeout: 45_000,
-        referer: `${INDEED_BASE}/`,
-      }).catch(() => undefined)
-      await waitForIndeedResultsVisible(page)
-      keepPageOpen = false
+    if (status >= 400) {
+      throw new Error(`Indeed returned HTTP ${status}`)
     }
 
     await sleep(1600)
@@ -610,35 +429,26 @@ export async function scrapeIndeed(
       platform: 'indeed' as const,
     }))
 
-    const latestCookies = await page.context().cookies(['https://de.indeed.com', 'https://www.indeed.com']).catch(() => [])
-    if (latestCookies.length > 0) {
-      await saveSession(userId, 'indeed', {
-        cookies: playwrightCookiesToProtocolForIndeed(latestCookies),
-        loggedInAt: new Date(),
-        username: session?.username || 'Indeed DE',
-      })
-    }
-
     onProgress({ type: 'progress', platform: 'indeed', progress: 100 })
     return limitScrapedJobs(rawList)
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    const isForbidden = /Indeed returned HTTP 403/.test(message)
-    if (isForbidden) {
-      indeedBlockedUntilByUser.set(userId, Date.now() + INDEED_BLOCK_COOLDOWN_MS)
-      console.warn('[indeed] blocked with HTTP 403; applying cooldown')
+    const isCaptcha =
+      /captcha|challenge|additional verification required|zusätzliche verifizierung erforderlich|cloudflare|ray-id/i.test(message)
+    if (isCaptcha) {
+      console.warn('[indeed] captcha/challenge detected')
     } else {
-      console.error('[indeed] scrape error:', err)
+      console.warn(`[indeed] scrape error: ${message}`)
     }
     onProgress({
       type: 'error',
       platform: 'indeed',
-      error: isForbidden
-        ? 'Indeed temporarily blocked this scraper request (HTTP 403). Please retry later.'
+      error: isCaptcha
+        ? 'Indeed has captcha/challenge right now. Please wait and try again later.'
         : message,
     })
     return []
   } finally {
-    if (page && !keepPageOpen) await page.close().catch(() => undefined)
+    if (page) await page.close().catch(() => undefined)
   }
 }

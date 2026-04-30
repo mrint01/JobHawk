@@ -67,11 +67,13 @@ router.post('/', async (req: Request, res: Response) => {
       if (!fn) continue
       try {
         const eventJobs: ScrapedJob[] = []
+        let hadPlatformError = false
         const jobs = await fn(jobTitle.trim(), location.trim(), (evt) => {
           events.push(evt)
           if (evt.type === 'jobs' && evt.jobs) eventJobs.push(...evt.jobs)
+          if (evt.type === 'error') hadPlatformError = true
         }, userId)
-        allJobs.push(...eventJobs, ...jobs)
+        if (!hadPlatformError) allJobs.push(...eventJobs, ...jobs)
       } catch (err) {
         events.push({ type: 'error', platform, error: err instanceof Error ? err.message : String(err) })
       }
@@ -116,18 +118,22 @@ router.get('/stream', (req: Request, res: Response) => {
       if (!fn) continue
       try {
         const eventJobs: ScrapedJob[] = []
+        let hadPlatformError = false
         const jobs = await fn(
           jobTitle!.trim(),
           location.trim(),
           (evt) => {
             send(evt)
             if (evt.type === 'jobs' && evt.jobs) eventJobs.push(...evt.jobs)
+            if (evt.type === 'error') hadPlatformError = true
           },
           userId,
         )
-        const platformJobs = [...eventJobs, ...jobs]
-        allJobs.push(...platformJobs)
-        send({ type: 'jobs', platform, jobs: platformJobs, progress: 100 })
+        if (!hadPlatformError) {
+          const platformJobs = [...eventJobs, ...jobs]
+          allJobs.push(...platformJobs)
+          send({ type: 'jobs', platform, jobs: platformJobs, progress: 100 })
+        }
       } catch (err) {
         send({ type: 'error', platform, error: err instanceof Error ? err.message : String(err) })
       }

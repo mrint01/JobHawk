@@ -258,6 +258,20 @@ export async function fetchAnalyticsCitiesApi(userId: string, from: string, targ
   }
 }
 
+export async function fetchAnalyticsPlatformsApi(userId: string, from: string, targetUserId?: string): Promise<Array<{ platform: PlatformId; appliedCount: number }>> {
+  try {
+    const params = new URLSearchParams({ from })
+    if (targetUserId) params.set('targetUserId', targetUserId)
+    const res = await fetch(`${BASE}/api/jobs/analytics/platforms?${params}`, {
+      headers: userHeaders(userId),
+    })
+    if (!res.ok) return []
+    return await res.json() as Array<{ platform: PlatformId; appliedCount: number }>
+  } catch {
+    return []
+  }
+}
+
 export async function fetchAnalyticsUsersApi(userId: string, from: string, to?: string): Promise<Array<{ userId: string; username: string; appliedCount: number }>> {
   try {
     const params = new URLSearchParams({ from })

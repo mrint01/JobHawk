@@ -12,7 +12,6 @@
  */
 import { Router, type Request, type Response } from 'express'
 import type { Page, Protocol } from 'puppeteer'
-import { firefox } from 'playwright'
 import { getAuthBrowserPage, getBrowserPage, sleep } from '../utils/browser'
 import { saveSession, clearSession, sessionsForUser } from '../utils/sessions'
 import { closeLinkedInFirefoxBrowser, getLinkedInFirefoxPage } from '../utils/linkedinFirefox'
@@ -507,7 +506,6 @@ async function waitForManualPlatformLoginPlaywright(
     label: string
     loginIndicators: string[]
     requiredCookieNames?: string[]
-    cookieDomainHint?: string
     maxWaitMs?: number
   },
 ): Promise<ManualLoginOutcome> {
@@ -522,13 +520,12 @@ async function waitForManualPlatformLoginPlaywright(
 
     const url = page.url().toLowerCase()
     const cookies = await page.context().cookies()
-    const domainHint = (opts.cookieDomainHint ?? 'linkedin').toLowerCase()
     const stillOnLoginLikePage = opts.loginIndicators.some((i) => url.includes(i))
     const hasRequiredCookies =
       (opts.requiredCookieNames?.length ?? 0) === 0
-        ? cookies.some((c) => c.domain.toLowerCase().includes(domainHint))
+        ? cookies.some((c) => /linkedin/i.test(c.domain))
         : opts.requiredCookieNames!.every((name) =>
-            cookies.some((c) => c.name === name && c.domain.toLowerCase().includes(domainHint)),
+            cookies.some((c) => c.name === name && /linkedin/i.test(c.domain)),
           )
 
     if (!stillOnLoginLikePage && hasRequiredCookies) return 'success'
@@ -553,7 +550,6 @@ async function runManualConnectLinkedInFirefox(userId: string): Promise<{ ok: bo
       label: 'linkedin',
       loginIndicators: ['/login', '/uas/login', 'checkpoint', 'challenge', 'verification'],
       requiredCookieNames: ['li_at'],
-      cookieDomainHint: 'linkedin',
     })
     if (outcome === 'closed') return { ok: false, error: 'Login window was closed. Click Connect and try again.' }
     if (outcome === 'timeout') return { ok: false, error: 'Timed out waiting for manual linkedin login.' }
@@ -566,62 +562,6 @@ async function runManualConnectLinkedInFirefox(userId: string): Promise<{ ok: bo
     return { ok: false, error: err instanceof Error ? err.message : 'Login failed' }
   } finally {
     if (page) await page.close().catch(() => undefined)
-  }
-}
-
-async function runManualConnectIndeedFirefox(userId: string): Promise<{ ok: boolean; username?: string; error?: string }> {
-  let browser: import('playwright').Browser | null = null
-  let context: import('playwright').BrowserContext | null = null
-  let page: import('playwright').Page | null = null
-  try {
-    browser = await firefox.launch({ headless: false })
-    context = await browser.newContext({
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:130.0) Gecko/20100101 Firefox/130.0',
-      viewport: { width: 1280, height: 800 },
-      locale: 'de-DE',
-      ignoreHTTPSErrors: true,
-      extraHTTPHeaders: { 'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8' },
-    })
-    page = await context.newPage()
-    await page.goto('https://de.indeed.com/', { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    await page.bringToFront().catch(() => undefined)
-
-    // Let user solve Cloudflare/captcha in visible Firefox window once.
-    const outcome = await waitForManualPlatformLoginPlaywright(page, {
-      label: 'indeed',
-      loginIndicators: ['captcha', 'challenge-platform', '/blocked', 'cloudflare'],
-      requiredCookieNames: ['cf_clearance'],
-      cookieDomainHint: 'indeed',
-    })
-    if (outcome === 'closed') return { ok: false, error: 'Indeed verification window was closed. Click Connect and try again.' }
-    if (outcome === 'timeout') return { ok: false, error: 'Timed out waiting for Indeed verification.' }
-
-    const rawCookies = await context.cookies(['https://de.indeed.com', 'https://www.indeed.com'])
-    const cookies: Protocol.Network.CookieParam[] = rawCookies.map((c) => {
-      const p: Protocol.Network.CookieParam = {
-        name: c.name,
-        value: c.value,
-        domain: c.domain && c.domain.includes('indeed') ? c.domain : '.indeed.com',
-        path: c.path && c.path.length > 0 ? c.path : '/',
-        secure: c.secure !== false,
-        httpOnly: !!c.httpOnly,
-      }
-      if (typeof c.expires === 'number' && c.expires > 0) p.expires = c.expires
-      if (c.sameSite === 'Strict' || c.sameSite === 'Lax' || c.sameSite === 'None') p.sameSite = c.sameSite
-      return p
-    })
-    await saveSession(userId, 'indeed', {
-      cookies,
-      loggedInAt: new Date(),
-      username: 'Indeed DE',
-    })
-    return { ok: true, username: 'Indeed DE' }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Indeed verify failed' }
-  } finally {
-    if (page) await page.close().catch(() => undefined)
-    if (context) await context.close().catch(() => undefined)
-    if (browser) await browser.close().catch(() => undefined)
   }
 }
 
@@ -947,11 +887,6 @@ router.post('/indeed/connect', async (req: Request, res: Response) => {
   activeConnectLocks.add('indeed')
   const userId = getUserId(req)
   try {
-    if (AUTH_MODE === 'manual') {
-      const result = await runManualConnectIndeedFirefox(userId)
-      res.json(result)
-      return
-    }
     await saveSession(userId, 'indeed', {
       cookies: [],
       loggedInAt: new Date(),

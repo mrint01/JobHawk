@@ -366,7 +366,7 @@ export default function Dashboard() {
         <StatCard label="Total Scraped" value={newJobs.length + appliedJobs.length} color="blue" />
         <StatCard label="Open Offers"   value={newJobs.length}                       color="violet" />
         <StatCard label="Applied"       value={appliedJobs.length}                   color="emerald" />
-        <StatCard label="In Pipeline"   value={pipelineJobs.length}                  color="blue" className="col-span-2 sm:col-span-1" />
+        <StatCard label="In Pipeline"   value={pipelineJobs.length}                  color="blue" />
       </div>
 
       {/* Tabs */}

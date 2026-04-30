@@ -12,6 +12,8 @@ import {
   analyticsAllUsersSeries,
   analyticsCitiesByUser,
   analyticsCitiesAllUsers,
+  analyticsPlatformsByUser,
+  analyticsPlatformsAllUsers,
 } from '../utils/jobStore'
 import { isAdmin, resolveUserId } from '../utils/userStore'
 import type { JobStatus } from '../scrapers/types'
@@ -112,6 +114,22 @@ router.get('/analytics/cities', async (req: Request, res: Response) => {
   const userId =
     rawTarget && rawTarget !== requesterId && (await isAdmin(requesterId)) ? rawTarget : requesterId
   res.json(await analyticsCitiesByUser(userId, safeFrom))
+})
+
+router.get('/analytics/platforms', async (req: Request, res: Response) => {
+  const requesterId = getUserId(req)
+  const fromRaw = String(req.query.from ?? '')
+  const from = new Date(fromRaw)
+  const safeFrom = Number.isNaN(from.getTime()) ? new Date(0) : from
+
+  const rawTarget = String(req.query.targetUserId ?? '')
+  if (rawTarget === 'all' && (await isAdmin(requesterId))) {
+    res.json(await analyticsPlatformsAllUsers(safeFrom))
+    return
+  }
+  const userId =
+    rawTarget && rawTarget !== requesterId && (await isAdmin(requesterId)) ? rawTarget : requesterId
+  res.json(await analyticsPlatformsByUser(userId, safeFrom))
 })
 
 export default router

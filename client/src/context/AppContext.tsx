@@ -292,8 +292,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (!serverOnline) { addToast('Backend server is offline. Start it with: npm run dev', 'error'); return }
     if (connectedPlatforms.length === 0) { addToast('Connect at least one platform in Settings before scraping', 'error'); return }
     setScrapeProgress({ isRunning: true, overall: 0, estimatedSecondsLeft: 15, platforms: [], startedAt: Date.now() })
+    const shownPlatformErrors = new Set<string>()
     try {
-      await scrapeAll(params, connectedPlatforms, appState.userId, (p) => setScrapeProgress(p))
+      await scrapeAll(params, connectedPlatforms, appState.userId, (p) => {
+        setScrapeProgress(p)
+        for (const platformProgress of p.platforms) {
+          if (platformProgress.status !== 'error' || !platformProgress.error) continue
+          const key = `${platformProgress.platform}:${platformProgress.error}`
+          if (shownPlatformErrors.has(key)) continue
+          shownPlatformErrors.add(key)
+          addToast(platformProgress.error, 'error')
+        }
+      })
       const updated = await fetchJobsApi(appState.userId)
       if (updated !== null) setJobs(updated)
     } catch {

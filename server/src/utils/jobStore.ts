@@ -191,6 +191,11 @@ export interface AnalyticsCityBucket {
   appliedCount: number
 }
 
+export interface AnalyticsPlatformBucket {
+  platform: Job['platform']
+  appliedCount: number
+}
+
 export async function analyticsByUser(userId: string, from: Date, city?: string): Promise<AnalyticsBucket[]> {
   const { data } = await supabase
     .from('jobs')
@@ -239,6 +244,25 @@ export async function analyticsCitiesAllUsers(from: Date): Promise<AnalyticsCity
   return buildCityBuckets((data ?? []).map((r) => r.location as string | null | undefined))
 }
 
+export async function analyticsPlatformsByUser(userId: string, from: Date): Promise<AnalyticsPlatformBucket[]> {
+  const { data } = await supabase
+    .from('jobs')
+    .select('platform')
+    .eq('user_id', userId)
+    .in('status', APPLICATION_STATUSES)
+    .gte('applied_at', from.toISOString())
+  return buildPlatformBuckets((data ?? []).map((r) => r.platform as Job['platform'] | null | undefined))
+}
+
+export async function analyticsPlatformsAllUsers(from: Date): Promise<AnalyticsPlatformBucket[]> {
+  const { data } = await supabase
+    .from('jobs')
+    .select('platform')
+    .in('status', APPLICATION_STATUSES)
+    .gte('applied_at', from.toISOString())
+  return buildPlatformBuckets((data ?? []).map((r) => r.platform as Job['platform'] | null | undefined))
+}
+
 export async function analyticsAllUsers(
   from: Date,
   to?: Date | null,
@@ -275,6 +299,17 @@ function buildCityBuckets(locations: Array<string | null | undefined>): Analytic
   return Array.from(buckets.entries())
     .sort((a, b) => b[1] - a[1])
     .map(([city, appliedCount]) => ({ city, appliedCount }))
+}
+
+function buildPlatformBuckets(platforms: Array<Job['platform'] | null | undefined>): AnalyticsPlatformBucket[] {
+  const buckets = new Map<Job['platform'], number>()
+  for (const platform of platforms) {
+    if (!platform) continue
+    buckets.set(platform, (buckets.get(platform) ?? 0) + 1)
+  }
+  return Array.from(buckets.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([platform, appliedCount]) => ({ platform, appliedCount }))
 }
 
 function normalizeCity(location: string | null | undefined): string {

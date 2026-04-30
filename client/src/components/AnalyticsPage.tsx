@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useApp } from '../context/AppContext'
-import { fetchAnalyticsCitiesApi, fetchAnalyticsSeriesApi, fetchUsersApi, type AuthUser } from '../services/api'
+import { fetchAnalyticsCitiesApi, fetchAnalyticsPlatformsApi, fetchAnalyticsSeriesApi, fetchUsersApi, type AuthUser } from '../services/api'
 
 type Period = 'today' | 'last_day' | 'last_week' | 'last_month'
 
@@ -42,6 +42,7 @@ export default function AnalyticsPage() {
   const [series, setSeries] = useState<Array<{ date: string; appliedCount: number }>>([])
   const [allTimeSeries, setAllTimeSeries] = useState<Array<{ date: string; appliedCount: number }>>([])
   const [cityBuckets, setCityBuckets] = useState<Array<{ city: string; appliedCount: number }>>([])
+  const [platformBuckets, setPlatformBuckets] = useState<Array<{ platform: string; appliedCount: number }>>([])
   const [selectedCity, setSelectedCity] = useState<string>('')
   const from = useMemo(() => periodStart(period), [period])
 
@@ -57,6 +58,7 @@ export default function AnalyticsPage() {
     fetchAnalyticsSeriesApi(appState.userId, from, targetUserId, selectedCity || undefined).then(setSeries)
     fetchAnalyticsSeriesApi(appState.userId, '1970-01-01T00:00:00.000Z', targetUserId, selectedCity || undefined).then(setAllTimeSeries)
     fetchAnalyticsCitiesApi(appState.userId, '1970-01-01T00:00:00.000Z', targetUserId).then(setCityBuckets)
+    fetchAnalyticsPlatformsApi(appState.userId, '1970-01-01T00:00:00.000Z', targetUserId).then(setPlatformBuckets)
   }, [appState.userId, isAdmin, from, targetUserId, selectedCity])
 
   useEffect(() => {
@@ -109,6 +111,21 @@ export default function AnalyticsPage() {
   }, [series, from])
 
   const cityTotal = cityBuckets.find((bucket) => bucket.city === selectedCity)?.appliedCount ?? 0
+  const platformLabel: Record<string, string> = {
+    linkedin: 'LinkedIn',
+    stepstone: 'StepStone',
+    xing: 'Xing',
+    indeed: 'Indeed',
+    jobriver: 'Jobriver',
+  }
+  const allPlatforms: Array<keyof typeof platformLabel> = ['linkedin', 'stepstone', 'xing', 'indeed', 'jobriver']
+  const platformTotals = useMemo(() => {
+    const map = new Map(platformBuckets.map((b) => [b.platform, b.appliedCount]))
+    return allPlatforms.map((platform) => ({
+      platform,
+      appliedCount: map.get(platform) ?? 0,
+    }))
+  }, [platformBuckets])
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
@@ -228,20 +245,34 @@ export default function AnalyticsPage() {
           )}
         </div>
 
-        <div className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-4">
-          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Applied totals by city</h3>
-          {cityBuckets.length === 0 ? (
-            <p className="text-sm text-gray-500 dark:text-slate-400">No city data available.</p>
-          ) : (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-4">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Applied totals by city</h3>
+            {cityBuckets.length === 0 ? (
+              <p className="text-sm text-gray-500 dark:text-slate-400">No city data available.</p>
+            ) : (
+              <div className="space-y-2">
+                {cityBuckets.map((bucket) => (
+                  <div key={bucket.city} className="flex items-center justify-between text-sm">
+                    <span className="text-gray-700 dark:text-slate-300">{bucket.city}</span>
+                    <span className="font-semibold text-gray-900 dark:text-white tabular-nums">{bucket.appliedCount}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-4">
+            <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Applied totals by platform</h3>
             <div className="space-y-2">
-              {cityBuckets.map((bucket) => (
-                <div key={bucket.city} className="flex items-center justify-between text-sm">
-                  <span className="text-gray-700 dark:text-slate-300">{bucket.city}</span>
+              {platformTotals.map((bucket) => (
+                <div key={bucket.platform} className="flex items-center justify-between text-sm">
+                  <span className="text-gray-700 dark:text-slate-300">{platformLabel[bucket.platform] ?? bucket.platform}</span>
                   <span className="font-semibold text-gray-900 dark:text-white tabular-nums">{bucket.appliedCount}</span>
                 </div>
               ))}
             </div>
-          )}
+          </div>
         </div>
 
         {/* Footer note */}

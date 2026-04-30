@@ -13,6 +13,8 @@ import type { ScrapedJob, ProgressCallback } from './types'
 import { limitScrapedJobs, SCRAPE_JOBS_PER_PLATFORM_LIMIT } from './limits'
 
 const INDEED_BASE = (process.env.INDEED_BASE_URL ?? 'https://de.indeed.com').replace(/\/$/, '')
+const INDEED_BLOCK_COOLDOWN_MS = 10 * 60 * 1000
+const indeedBlockedUntilByUser = new Map<string, number>()
 
 const CONTRACT_TOKENS_DE = [
   'Vollzeit',
@@ -34,15 +36,41 @@ const CONTRACT_TOKENS_DE = [
   'Hybrides Arbeiten',
 ]
 
-function buildIndeedSearchUrl(jobTitle: string, location: string): string {
-  const params = new URLSearchParams({
-    q: jobTitle.trim(),
-    sort: 'date',
-    fromage: 'last',
-  })
+function buildIndeedSearchUrl(jobTitle: string, location: string, opts?: { recentOnly?: boolean }): string {
+  const params = new URLSearchParams({ q: jobTitle.trim() })
+  if (opts?.recentOnly) {
+    params.set('sort', 'date')
+    params.set('fromage', 'last')
+  }
   const loc = location.trim()
   if (loc) params.set('l', loc)
   return `${INDEED_BASE}/jobs?${params.toString()}`
+}
+
+async function openIndeedSearch(page: Page, jobTitle: string, location: string): Promise<void> {
+  // Warm-up homepage first to establish cookies/session before opening search.
+  await page.goto(`${INDEED_BASE}/`, { waitUntil: 'domcontentloaded', timeout: 45_000 })
+  await sleep(900)
+  await tryDismissConsent(page)
+  await sleep(500)
+
+  const urls = [
+    buildIndeedSearchUrl(jobTitle, location, { recentOnly: false }),
+    buildIndeedSearchUrl(jobTitle, location, { recentOnly: true }),
+  ]
+  let lastStatus = 0
+  for (let i = 0; i < urls.length; i++) {
+    const response = await page.goto(urls[i], {
+      waitUntil: 'domcontentloaded',
+      timeout: 45_000,
+      referer: `${INDEED_BASE}/`,
+    })
+    const status = response?.status() ?? 0
+    lastStatus = status
+    if (status > 0 && status < 400) return
+    await jitter(1200, 2200)
+  }
+  throw new Error(`Indeed returned HTTP ${lastStatus || 403}`)
 }
 
 function parseIndeedDateSnippet(raw: string): string {
@@ -340,6 +368,11 @@ export async function scrapeIndeed(
   onProgress: ProgressCallback,
   userId = 'admin',
 ): Promise<ScrapedJob[]> {
+  const blockedUntil = indeedBlockedUntilByUser.get(userId) ?? 0
+  if (blockedUntil > Date.now()) {
+    return []
+  }
+
   if (!getSession(userId, 'indeed')) {
     onProgress({
       type: 'error',
@@ -354,14 +387,13 @@ export async function scrapeIndeed(
   let page: Page | null = null
   try {
     page = await getBrowserPage(false)
-    await page.setExtraHTTPHeaders({ 'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8' })
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+      'Upgrade-Insecure-Requests': '1',
+      'Cache-Control': 'max-age=0',
+    })
 
-    const url = buildIndeedSearchUrl(jobTitle, location)
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    const status = response?.status() ?? 0
-    if (status >= 400) {
-      throw new Error(`Indeed returned HTTP ${status}`)
-    }
+    await openIndeedSearch(page, jobTitle, location)
 
     await sleep(1600)
     await tryDismissConsent(page)
@@ -416,11 +448,20 @@ export async function scrapeIndeed(
     onProgress({ type: 'progress', platform: 'indeed', progress: 100 })
     return limitScrapedJobs(rawList)
   } catch (err) {
-    console.error('[indeed] scrape error:', err)
+    const message = err instanceof Error ? err.message : String(err)
+    const isForbidden = /Indeed returned HTTP 403/.test(message)
+    if (isForbidden) {
+      indeedBlockedUntilByUser.set(userId, Date.now() + INDEED_BLOCK_COOLDOWN_MS)
+      console.warn('[indeed] blocked with HTTP 403; applying cooldown')
+    } else {
+      console.error('[indeed] scrape error:', err)
+    }
     onProgress({
       type: 'error',
       platform: 'indeed',
-      error: err instanceof Error ? err.message : String(err),
+      error: isForbidden
+        ? 'Indeed temporarily blocked this scraper request (HTTP 403). Please retry later.'
+        : message,
     })
     return []
   } finally {

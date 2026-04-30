@@ -4,7 +4,7 @@ import type { ScrapedJob } from './types'
  * How many jobs to keep per platform per scrape. The site may render more rows in the DOM
  * (virtual lists, lazy load, how far the list scrolled before extract); capping makes counts stable.
  */
-export const SCRAPE_JOBS_PER_PLATFORM_LIMIT = 25
+export const SCRAPE_JOBS_PER_PLATFORM_LIMIT = 10
 
 /** Newest first by postedDate, then take the first N (invalid dates sort last). */
 export function limitScrapedJobs(jobs: ScrapedJob[]): ScrapedJob[] {

@@ -232,7 +232,7 @@ async function start() {
         if (msg.type === 'hello') {
           registerAgent(ws, Boolean(msg.hasSession), String(msg.username ?? ''), String(msg.version ?? '1.0'))
         } else {
-          handleAgentMessage(raw)
+          handleAgentMessage(ws, raw)
         }
       } catch {
         // ignore malformed messages
@@ -241,12 +241,12 @@ async function start() {
 
     ws.on('close', () => {
       clearInterval(pingInterval)
-      unregisterAgent()
+      unregisterAgent(ws)
     })
 
     ws.on('error', () => {
       clearInterval(pingInterval)
-      unregisterAgent()
+      unregisterAgent(ws)
     })
   })
 

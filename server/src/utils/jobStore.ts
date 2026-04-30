@@ -186,23 +186,51 @@ export interface AnalyticsBucket {
   appliedCount: number
 }
 
-export async function analyticsByUser(userId: string, from: Date): Promise<AnalyticsBucket[]> {
-  const { data } = await supabase
+export interface AnalyticsCityBucket {
+  city: string
+  appliedCount: number
+}
+
+export async function analyticsByUser(userId: string, from: Date, city?: string): Promise<AnalyticsBucket[]> {
+  let query = supabase
     .from('jobs')
     .select('applied_at')
     .eq('user_id', userId)
     .in('status', APPLICATION_STATUSES)
     .gte('applied_at', from.toISOString())
+  if (city) query = query.ilike('location', `${city}%`)
+  const { data } = await query
   return buildBuckets((data ?? []).map((r) => r.applied_at as string))
 }
 
-export async function analyticsAllUsersSeries(from: Date): Promise<AnalyticsBucket[]> {
-  const { data } = await supabase
+export async function analyticsAllUsersSeries(from: Date, city?: string): Promise<AnalyticsBucket[]> {
+  let query = supabase
     .from('jobs')
     .select('applied_at')
     .in('status', APPLICATION_STATUSES)
     .gte('applied_at', from.toISOString())
+  if (city) query = query.ilike('location', `${city}%`)
+  const { data } = await query
   return buildBuckets((data ?? []).map((r) => r.applied_at as string))
+}
+
+export async function analyticsCitiesByUser(userId: string, from: Date): Promise<AnalyticsCityBucket[]> {
+  const { data } = await supabase
+    .from('jobs')
+    .select('location')
+    .eq('user_id', userId)
+    .in('status', APPLICATION_STATUSES)
+    .gte('applied_at', from.toISOString())
+  return buildCityBuckets((data ?? []).map((r) => r.location as string | null | undefined))
+}
+
+export async function analyticsCitiesAllUsers(from: Date): Promise<AnalyticsCityBucket[]> {
+  const { data } = await supabase
+    .from('jobs')
+    .select('location')
+    .in('status', APPLICATION_STATUSES)
+    .gte('applied_at', from.toISOString())
+  return buildCityBuckets((data ?? []).map((r) => r.location as string | null | undefined))
 }
 
 export async function analyticsAllUsers(
@@ -229,6 +257,23 @@ function buildBuckets(appliedAts: string[]): AnalyticsBucket[] {
   return Array.from(buckets.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
     .map(([date, appliedCount]) => ({ date, appliedCount }))
+}
+
+function buildCityBuckets(locations: Array<string | null | undefined>): AnalyticsCityBucket[] {
+  const buckets = new Map<string, number>()
+  for (const location of locations) {
+    const normalized = normalizeCity(location)
+    if (!normalized) continue
+    buckets.set(normalized, (buckets.get(normalized) ?? 0) + 1)
+  }
+  return Array.from(buckets.entries())
+    .sort((a, b) => b[1] - a[1])
+    .map(([city, appliedCount]) => ({ city, appliedCount }))
+}
+
+function normalizeCity(location: string | null | undefined): string {
+  if (!location) return ''
+  return location.split(',')[0]?.trim() ?? ''
 }
 
 function dbRowToJob(row: Record<string, unknown>): Job {

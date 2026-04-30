@@ -10,6 +10,8 @@ import {
   analyticsByUser,
   analyticsAllUsers,
   analyticsAllUsersSeries,
+  analyticsCitiesByUser,
+  analyticsCitiesAllUsers,
 } from '../utils/jobStore'
 import { isAdmin, resolveUserId } from '../utils/userStore'
 import type { JobStatus } from '../scrapers/types'
@@ -68,15 +70,17 @@ router.get('/analytics/series', async (req: Request, res: Response) => {
   const fromRaw = String(req.query.from ?? '')
   const from = new Date(fromRaw)
   const safeFrom = Number.isNaN(from.getTime()) ? new Date(0) : from
+  const city = String(req.query.city ?? '').trim()
+  const cityFilter = city.length > 0 ? city : undefined
 
   const rawTarget = String(req.query.targetUserId ?? '')
   if (rawTarget === 'all' && (await isAdmin(requesterId))) {
-    res.json(await analyticsAllUsersSeries(safeFrom))
+    res.json(await analyticsAllUsersSeries(safeFrom, cityFilter))
     return
   }
   const userId =
     rawTarget && rawTarget !== requesterId && (await isAdmin(requesterId)) ? rawTarget : requesterId
-  res.json(await analyticsByUser(userId, safeFrom))
+  res.json(await analyticsByUser(userId, safeFrom, cityFilter))
 })
 
 router.get('/analytics/users', async (req: Request, res: Response) => {
@@ -92,6 +96,22 @@ router.get('/analytics/users', async (req: Request, res: Response) => {
   const to = new Date(toRaw)
   const safeTo = Number.isNaN(to.getTime()) ? null : to
   res.json(await analyticsAllUsers(safeFrom, safeTo))
+})
+
+router.get('/analytics/cities', async (req: Request, res: Response) => {
+  const requesterId = getUserId(req)
+  const fromRaw = String(req.query.from ?? '')
+  const from = new Date(fromRaw)
+  const safeFrom = Number.isNaN(from.getTime()) ? new Date(0) : from
+
+  const rawTarget = String(req.query.targetUserId ?? '')
+  if (rawTarget === 'all' && (await isAdmin(requesterId))) {
+    res.json(await analyticsCitiesAllUsers(safeFrom))
+    return
+  }
+  const userId =
+    rawTarget && rawTarget !== requesterId && (await isAdmin(requesterId)) ? rawTarget : requesterId
+  res.json(await analyticsCitiesByUser(userId, safeFrom))
 })
 
 export default router

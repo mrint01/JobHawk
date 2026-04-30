@@ -37,7 +37,8 @@ export function registerAgent(ws: WebSocket, hasSession: boolean, username: stri
   console.log(`[linkedin-agent] connected: hasSession=${hasSession} v=${version}`)
 }
 
-export function unregisterAgent() {
+export function unregisterAgent(ws?: WebSocket) {
+  if (ws && agent && agent.ws !== ws) return
   agent = null
   if (pendingSessionCheck) {
     clearTimeout(pendingSessionCheck.timer)
@@ -122,7 +123,8 @@ export function dispatchScrapeToAgent(
   })
 }
 
-export function handleAgentMessage(raw: string) {
+export function handleAgentMessage(ws: WebSocket, raw: string) {
+  if (!agent || agent.ws !== ws) return
   let data: Record<string, unknown>
   try { data = JSON.parse(raw) } catch { return }
 

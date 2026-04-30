@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 import { useApp } from '../context/AppContext'
-import { fetchAnalyticsSeriesApi, fetchUsersApi, type AuthUser } from '../services/api'
+import { fetchAnalyticsCitiesApi, fetchAnalyticsSeriesApi, fetchUsersApi, type AuthUser } from '../services/api'
 
 type Period = 'today' | 'last_day' | 'last_week' | 'last_month'
 
@@ -41,6 +41,8 @@ export default function AnalyticsPage() {
   const [selectedViewUserId, setSelectedViewUserId] = useState<string | null>(null)
   const [series, setSeries] = useState<Array<{ date: string; appliedCount: number }>>([])
   const [allTimeSeries, setAllTimeSeries] = useState<Array<{ date: string; appliedCount: number }>>([])
+  const [cityBuckets, setCityBuckets] = useState<Array<{ city: string; appliedCount: number }>>([])
+  const [selectedCity, setSelectedCity] = useState<string>('')
   const from = useMemo(() => periodStart(period), [period])
 
   // targetUserId for API calls
@@ -52,9 +54,14 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     if (!appState.userId) return
-    fetchAnalyticsSeriesApi(appState.userId, from, targetUserId).then(setSeries)
-    fetchAnalyticsSeriesApi(appState.userId, '1970-01-01T00:00:00.000Z', targetUserId).then(setAllTimeSeries)
-  }, [appState.userId, isAdmin, from, targetUserId])
+    fetchAnalyticsSeriesApi(appState.userId, from, targetUserId, selectedCity || undefined).then(setSeries)
+    fetchAnalyticsSeriesApi(appState.userId, '1970-01-01T00:00:00.000Z', targetUserId, selectedCity || undefined).then(setAllTimeSeries)
+    fetchAnalyticsCitiesApi(appState.userId, '1970-01-01T00:00:00.000Z', targetUserId).then(setCityBuckets)
+  }, [appState.userId, isAdmin, from, targetUserId, selectedCity])
+
+  useEffect(() => {
+    setSelectedCity('')
+  }, [targetUserId])
 
   const chartTotal = series.reduce((sum, item) => sum + item.appliedCount, 0)
 
@@ -101,6 +108,8 @@ export default function AnalyticsPage() {
     return dates
   }, [series, from])
 
+  const cityTotal = cityBuckets.find((bucket) => bucket.city === selectedCity)?.appliedCount ?? 0
+
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
       <div className="card p-5 sm:p-6 space-y-5">
@@ -139,6 +148,15 @@ export default function AnalyticsPage() {
               <option value="last_month">Last 30 days</option>
             </select>
           </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-gray-500 dark:text-slate-400 whitespace-nowrap">City</span>
+            <select className="input max-w-[220px]" value={selectedCity} onChange={(e) => setSelectedCity(e.target.value)}>
+              <option value="">All cities</option>
+              {cityBuckets.map((bucket) => (
+                <option key={bucket.city} value={bucket.city}>{bucket.city}</option>
+              ))}
+            </select>
+          </div>
         </div>
 
         {/* Stat tiles */}
@@ -154,6 +172,11 @@ export default function AnalyticsPage() {
         <p className="text-sm text-gray-600 dark:text-slate-300">
           Applications in chart range: <span className="font-semibold text-gray-900 dark:text-white">{chartTotal}</span>
         </p>
+        {selectedCity && (
+          <p className="text-sm text-gray-600 dark:text-slate-300">
+            Total applied in {selectedCity}: <span className="font-semibold text-gray-900 dark:text-white">{cityTotal}</span>
+          </p>
+        )}
 
         {/* Chart */}
         <div className="h-64 rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 pt-4 pr-4">
@@ -202,6 +225,22 @@ export default function AnalyticsPage() {
                 />
               </AreaChart>
             </ResponsiveContainer>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-4">
+          <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Applied totals by city</h3>
+          {cityBuckets.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-slate-400">No city data available.</p>
+          ) : (
+            <div className="space-y-2">
+              {cityBuckets.slice(0, 10).map((bucket) => (
+                <div key={bucket.city} className="flex items-center justify-between text-sm">
+                  <span className="text-gray-700 dark:text-slate-300">{bucket.city}</span>
+                  <span className="font-semibold text-gray-900 dark:text-white tabular-nums">{bucket.appliedCount}</span>
+                </div>
+              ))}
+            </div>
           )}
         </div>
 

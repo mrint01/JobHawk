@@ -141,11 +141,16 @@ export default function ScrapeForm() {
   const { startScrape, isScraping, connectedPlatforms } = useApp()
   const [jobTitle, setJobTitle] = useState('Software Engineer')
   const [location, setLocation] = useState('Cologne, Germany')
+  const [useLocationList, setUseLocationList] = useState(false)
+  const locationOptions = ['Cologne', 'Dusseldorf', 'Dortmund', 'Essen', 'Wuppertal', 'Berlin', 'Munich', 'Hamburg', 'Frankfurt', 'Stuttgart']
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
     if (!jobTitle.trim()) return
-    startScrape({ jobTitle: jobTitle.trim(), location: location.trim() })
+    startScrape({
+      jobTitle: jobTitle.trim(),
+      location: location.trim(),
+    })
   }
 
   const platformLabels: Record<Platform, string> = {
@@ -189,11 +194,48 @@ export default function ScrapeForm() {
             />
           </div>
 
-          <LocationInput
-            value={location}
-            onChange={setLocation}
-            disabled={isScraping}
-          />
+          {useLocationList ? (
+            <div className="relative">
+              <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none z-10" />
+              <select
+                className="input pl-10"
+                value={location}
+                onChange={(e) => setLocation(e.target.value)}
+                disabled={isScraping}
+              >
+                {locationOptions.map((city) => (
+                  <option key={city} value={city}>{city}</option>
+                ))}
+              </select>
+            </div>
+          ) : (
+            <LocationInput
+              value={location}
+              onChange={setLocation}
+              disabled={isScraping}
+            />
+          )}
+        </div>
+
+        <div className="mb-4">
+          <label className="flex items-start gap-2.5 text-sm text-gray-700 dark:text-slate-300">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-gray-300 dark:border-slate-600"
+              checked={useLocationList}
+              onChange={(e) => {
+                const enabled = e.target.checked
+                setUseLocationList(enabled)
+                if (enabled && !locationOptions.includes(location)) {
+                  setLocation(locationOptions[0])
+                }
+              }}
+              disabled={isScraping}
+            />
+            <span>
+              Use location dropdown list instead of typing
+            </span>
+          </label>
         </div>
 
         <button

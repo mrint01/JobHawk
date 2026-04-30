@@ -229,15 +229,30 @@ export async function setUserStatusApi(id: string, status: 'active' | 'disabled'
   }
 }
 
-export async function fetchAnalyticsSeriesApi(userId: string, from: string, targetUserId?: string): Promise<Array<{ date: string; appliedCount: number }>> {
+export async function fetchAnalyticsSeriesApi(userId: string, from: string, targetUserId?: string, city?: string): Promise<Array<{ date: string; appliedCount: number }>> {
   try {
     const params = new URLSearchParams({ from })
     if (targetUserId) params.set('targetUserId', targetUserId)
+    if (city) params.set('city', city)
     const res = await fetch(`${BASE}/api/jobs/analytics/series?${params}`, {
       headers: userHeaders(userId),
     })
     if (!res.ok) return []
     return await res.json() as Array<{ date: string; appliedCount: number }>
+  } catch {
+    return []
+  }
+}
+
+export async function fetchAnalyticsCitiesApi(userId: string, from: string, targetUserId?: string): Promise<Array<{ city: string; appliedCount: number }>> {
+  try {
+    const params = new URLSearchParams({ from })
+    if (targetUserId) params.set('targetUserId', targetUserId)
+    const res = await fetch(`${BASE}/api/jobs/analytics/cities?${params}`, {
+      headers: userHeaders(userId),
+    })
+    if (!res.ok) return []
+    return await res.json() as Array<{ city: string; appliedCount: number }>
   } catch {
     return []
   }

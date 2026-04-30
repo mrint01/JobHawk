@@ -64,6 +64,8 @@ RECONNECT_DELAY = 5
 MAX_RECONNECT_DELAY = 60
 OPEN_TIMEOUT_SECONDS = 45
 WAKE_TIMEOUT_SECONDS = 12
+WS_PING_INTERVAL_SECONDS = 20
+WS_PING_TIMEOUT_SECONDS = 20
 MAX_JOBS = 100
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
@@ -376,7 +378,13 @@ class LinkedInAgent:
 
     async def _ws_loop(self):
         log.info(f"Connecting to {self.ws_url}")
-        async with websockets.connect(self.ws_url, ping_interval=None, close_timeout=10, open_timeout=OPEN_TIMEOUT_SECONDS) as ws:
+        async with websockets.connect(
+            self.ws_url,
+            ping_interval=WS_PING_INTERVAL_SECONDS,
+            ping_timeout=WS_PING_TIMEOUT_SECONDS,
+            close_timeout=10,
+            open_timeout=OPEN_TIMEOUT_SECONDS,
+        ) as ws:
             log.info("✅  Connected to backend")
             self.reconnect_delay = RECONNECT_DELAY
             await ws.send(json.dumps({"type": "hello", "hasSession": self.has_session, "version": VERSION}))

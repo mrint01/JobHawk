@@ -1,7 +1,0 @@
-node_modules
-**/node_modules
-.git
-.cursor
-client/dist
-server/dist
-npm-debug.log

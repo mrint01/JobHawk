@@ -148,7 +148,8 @@ Important:
 
 For Railway + Playwright WebKit, deploy with Docker only.
 
-1. Ensure Railway uses the repository `Dockerfile` as the builder.
-2. Redeploy.
+1. Set **Root Directory** to `server` (deploy API only; client stays separate).
+2. Builder **Dockerfile**, **Dockerfile path** `Dockerfile` (this resolves to `server/Dockerfile` when root is `server`).
+3. Redeploy.
 
-The provided `Dockerfile` is based on `mcr.microsoft.com/playwright:v1.59.1-jammy`, which already includes the Linux shared libraries required by WebKit (`libgstreamer`, GTK, etc.).
+The image base is `mcr.microsoft.com/playwright:v1.59.1-jammy`, which includes the Linux shared libraries WebKit needs (`libgstreamer`, GTK, etc.).

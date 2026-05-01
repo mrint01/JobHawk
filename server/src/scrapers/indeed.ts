@@ -4,7 +4,7 @@
  * Opt-in in Settings → Indeed → Connect stores a marker session only (no login).
  * Scrolls the results list inside the page shell (inner scrollbar), matching LinkedIn-style UX.
  */
-import { webkit, type Browser, type BrowserContext, type Page } from 'playwright'
+import { webkit, type Browser, type BrowserContext, type LaunchOptions, type Page } from 'playwright'
 import { jitter, sleep } from '../utils/browser'
 import { nanoid } from '../utils/nanoid'
 import { subMinutes, subHours, subDays, subWeeks, parseISO, isValid } from 'date-fns'
@@ -13,6 +13,61 @@ import type { ScrapedJob, ProgressCallback } from './types'
 import { limitScrapedJobs, SCRAPE_JOBS_PER_PLATFORM_LIMIT } from './limits'
 
 const INDEED_BASE = (process.env.INDEED_BASE_URL ?? 'https://de.indeed.com').replace(/\/$/, '')
+
+/** Linux WebKit UA matches typical prod (Railway/Docker); avoids macOS Safari UA on a Linux host. */
+const INDEED_DEFAULT_UA =
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15'
+
+function indeedUserAgent(): string {
+  const custom = process.env.INDEED_USER_AGENT?.trim()
+  return custom || INDEED_DEFAULT_UA
+}
+
+/** Optional proxy when Indeed blocks datacenter IPs (HTTP 403). Example: http://user:pass@host:port */
+function indeedLaunchProxy(): LaunchOptions['proxy'] {
+  const raw = process.env.INDEED_PROXY_SERVER?.trim()
+  if (!raw) return undefined
+  try {
+    const normalized = raw.includes('://') ? raw : `http://${raw}`
+    const u = new URL(normalized)
+    const server = `${u.protocol}//${u.hostname}${u.port ? `:${u.port}` : ''}`
+    const username = u.username ? decodeURIComponent(u.username) : undefined
+    const password = u.password ? decodeURIComponent(u.password) : undefined
+    if (username || password) return { server, username, password }
+    return { server }
+  } catch {
+    console.warn('[indeed] invalid INDEED_PROXY_SERVER — ignoring')
+    return undefined
+  }
+}
+
+async function navigateToIndeedJobSearch(page: Page, searchUrl: string): Promise<{ status: number }> {
+  const baseRoot = `${INDEED_BASE}/`
+
+  await page.goto(baseRoot, { waitUntil: 'domcontentloaded', timeout: 35_000 }).catch(() => undefined)
+  await jitter(280, 720)
+
+  let response = await page.goto(searchUrl, {
+    waitUntil: 'domcontentloaded',
+    timeout: 55_000,
+    referer: baseRoot,
+  })
+  let status = response?.status() ?? 0
+
+  if (status === 403) {
+    await sleep(1600 + Math.floor(Math.random() * 1400))
+    await page.goto(baseRoot, { waitUntil: 'domcontentloaded', timeout: 35_000 }).catch(() => undefined)
+    await jitter(480, 1100)
+    response = await page.goto(searchUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 55_000,
+      referer: baseRoot,
+    })
+    status = response?.status() ?? status
+  }
+
+  return { status }
+}
 
 const CONTRACT_TOKENS_DE = [
   'Vollzeit',
@@ -368,31 +423,44 @@ export async function scrapeIndeed(
   let context: BrowserContext | null = null
   let page: Page | null = null
   try {
-    browser = await webkit.launch({ headless: process.env.PUPPETEER_HEADLESS !== 'false' })
+    browser = await webkit.launch({
+      headless: process.env.PUPPETEER_HEADLESS !== 'false',
+      proxy: indeedLaunchProxy(),
+    })
     context = await browser.newContext({
-      userAgent:
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Safari/605.1.15',
-      viewport: { width: 1280, height: 800 },
+      userAgent: indeedUserAgent(),
+      viewport: { width: 1366, height: 768 },
       locale: 'de-DE',
-      extraHTTPHeaders: { 'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8' },
+      timezoneId: 'Europe/Berlin',
+      extraHTTPHeaders: {
+        'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Upgrade-Insecure-Requests': '1',
+      },
       ignoreHTTPSErrors: true,
     })
     page = await context.newPage()
 
     const url = buildIndeedSearchUrl(jobTitle, location)
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    const status = response?.status() ?? 0
-    const captchaDetected = await isIndeedCaptchaChallenge(page)
-    if (captchaDetected) {
-      throw new Error('Indeed has captcha/challenge right now. Please wait and try again later.')
-    }
-    if (status >= 400) {
-      throw new Error(`Indeed returned HTTP ${status}`)
-    }
+    const { status } = await navigateToIndeedJobSearch(page, url)
 
     await sleep(1600)
     await tryDismissConsent(page)
     await sleep(500)
+
+    const captchaDetected = await isIndeedCaptchaChallenge(page)
+    if (captchaDetected) {
+      throw new Error('Indeed has captcha/challenge right now. Please wait and try again later.')
+    }
+
+    const probeJobs = await extractIndeed(page)
+    if (status >= 400 && probeJobs.length === 0) {
+      const hint =
+        status === 403
+          ? ' Datacenter IPs are often blocked — try setting INDEED_PROXY_SERVER (HTTP proxy URL).'
+          : ''
+      throw new Error(`Indeed returned HTTP ${status}.${hint}`)
+    }
 
     onProgress({ type: 'progress', platform: 'indeed', progress: 22 })
 
@@ -407,7 +475,7 @@ export async function scrapeIndeed(
       }
     }
 
-    mergeExtracted(await extractIndeed(page))
+    mergeExtracted(probeJobs)
 
     for (let round = 0; round < 48; round++) {
       if (merged.size >= SCRAPE_JOBS_PER_PLATFORM_LIMIT * 3) break

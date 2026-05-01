@@ -198,7 +198,7 @@ export default function ScrapeForm() {
             <div className="relative">
               <MapPin className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none z-10" />
               <select
-                className="input pl-10"
+                className="input pl-10 pr-10 appearance-none"
                 value={location}
                 onChange={(e) => setLocation(e.target.value)}
                 disabled={isScraping}
@@ -207,6 +207,9 @@ export default function ScrapeForm() {
                   <option key={city} value={city}>{city}</option>
                 ))}
               </select>
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500 text-xs">
+                ▼
+              </span>
             </div>
           ) : (
             <LocationInput
@@ -218,10 +221,10 @@ export default function ScrapeForm() {
         </div>
 
         <div className="mb-4">
-          <label className="flex items-start gap-2.5 text-sm text-gray-700 dark:text-slate-300">
+          <label className="flex items-center gap-2.5 text-sm text-gray-700 dark:text-slate-300">
             <input
               type="checkbox"
-              className="mt-0.5 h-4 w-4 rounded border-gray-300 dark:border-slate-600"
+              className="h-4 w-4 rounded border-gray-300 dark:border-slate-600"
               checked={useLocationList}
               onChange={(e) => {
                 const enabled = e.target.checked
@@ -232,7 +235,7 @@ export default function ScrapeForm() {
               }}
               disabled={isScraping}
             />
-            <span>
+            <span className="leading-5">
               Use location dropdown list instead of typing
             </span>
           </label>

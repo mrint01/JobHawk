@@ -4,6 +4,7 @@ import { scrapeXing } from '../scrapers/xing'
 import { scrapeIndeed } from '../scrapers/indeed'
 import { scrapeJobriver } from '../scrapers/jobriver'
 import type { Platform, ScrapedJob, ScrapeEvent, ProgressCallback } from '../scrapers/types'
+import { SCRAPE_JOBS_PER_PLATFORM_LIMIT } from '../scrapers/limits'
 import { closeScrapeBrowser } from '../utils/browser'
 import { mergeJobsForUser } from '../utils/jobStore'
 import { resolveUserId } from '../utils/userStore'
@@ -30,7 +31,7 @@ function buildScrapers(platforms: Platform[]): Record<Platform, ScraperFn | null
           cb({ type: 'error', platform: 'linkedin', error: 'LinkedIn agent is not connected or session expired. Open Settings and click Connect on LinkedIn Agent.' })
           return Promise.resolve([])
         }
-        return dispatchScrapeToAgent({ keywords: title, location, maxJobs: 100 }, cb)
+        return dispatchScrapeToAgent({ keywords: title, location, maxJobs: SCRAPE_JOBS_PER_PLATFORM_LIMIT }, cb)
       }
     : null
 

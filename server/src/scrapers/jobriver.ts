@@ -13,6 +13,7 @@ import type { ScrapedJob, ProgressCallback } from './types'
 import { SCRAPE_JOBS_PER_PLATFORM_LIMIT } from './limits'
 
 const JOBRIVER_BASE = 'https://jobriver.de'
+const JOBRIVER_LIMIT = 25
 
 function buildJobriverSearchUrl(jobTitle: string, location: string): string {
   const params = new URLSearchParams()
@@ -428,6 +429,7 @@ export async function scrapeJobriver(
     mergeExtracted(await extractJobriver(page))
 
     for (let round = 0; round < 48; round++) {
+      if (merged.size >= JOBRIVER_LIMIT) break
       if (merged.size >= SCRAPE_JOBS_PER_PLATFORM_LIMIT * 3) break
 
       const state = await getJobriverScrollState(page).catch(() => ({
@@ -450,6 +452,7 @@ export async function scrapeJobriver(
       await scrollJobriverList(page)
       await jitter(460, 860)
       mergeExtracted(await extractJobriver(page))
+      if (merged.size >= JOBRIVER_LIMIT) break
     }
 
     const raw = [...merged.values()].map((j) => ({
@@ -467,7 +470,7 @@ export async function scrapeJobriver(
         const bKey = Number.isNaN(tb) ? 0 : tb
         return bKey - aKey
       })
-      .slice(0, SCRAPE_JOBS_PER_PLATFORM_LIMIT)
+      .slice(0, JOBRIVER_LIMIT)
   } catch (err) {
     onProgress({
       type: 'error',

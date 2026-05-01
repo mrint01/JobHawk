@@ -4,7 +4,6 @@ import { scrapeXing } from '../scrapers/xing'
 import { scrapeIndeed } from '../scrapers/indeed'
 import { scrapeJobriver } from '../scrapers/jobriver'
 import type { Platform, ScrapedJob, ScrapeEvent, ProgressCallback } from '../scrapers/types'
-import { SCRAPE_JOBS_PER_PLATFORM_LIMIT } from '../scrapers/limits'
 import { closeScrapeBrowser } from '../utils/browser'
 import { mergeJobsForUser } from '../utils/jobStore'
 import { resolveUserId } from '../utils/userStore'
@@ -31,7 +30,7 @@ function buildScrapers(platforms: Platform[]): Record<Platform, ScraperFn | null
           cb({ type: 'error', platform: 'linkedin', error: 'LinkedIn agent is not connected or session expired. Open Settings and click Connect on LinkedIn Agent.' })
           return Promise.resolve([])
         }
-        return dispatchScrapeToAgent({ keywords: title, location, maxJobs: SCRAPE_JOBS_PER_PLATFORM_LIMIT }, cb)
+        return dispatchScrapeToAgent({ keywords: title, location, maxJobs: 100 }, cb)
       }
     : null
 
@@ -67,14 +66,8 @@ router.post('/', async (req: Request, res: Response) => {
       const fn = scrapers[platform]
       if (!fn) continue
       try {
-        const eventJobs: ScrapedJob[] = []
-        let hadPlatformError = false
-        const jobs = await fn(jobTitle.trim(), location.trim(), (evt) => {
-          events.push(evt)
-          if (evt.type === 'jobs' && evt.jobs) eventJobs.push(...evt.jobs)
-          if (evt.type === 'error') hadPlatformError = true
-        }, userId)
-        if (!hadPlatformError) allJobs.push(...eventJobs, ...jobs)
+        const jobs = await fn(jobTitle.trim(), location.trim(), (evt) => events.push(evt), userId)
+        allJobs.push(...jobs)
       } catch (err) {
         events.push({ type: 'error', platform, error: err instanceof Error ? err.message : String(err) })
       }
@@ -118,23 +111,17 @@ router.get('/stream', (req: Request, res: Response) => {
       const fn = scrapers[platform]
       if (!fn) continue
       try {
-        const eventJobs: ScrapedJob[] = []
-        let hadPlatformError = false
         const jobs = await fn(
           jobTitle!.trim(),
           location.trim(),
           (evt) => {
             send(evt)
-            if (evt.type === 'jobs' && evt.jobs) eventJobs.push(...evt.jobs)
-            if (evt.type === 'error') hadPlatformError = true
+            if (evt.type === 'jobs') allJobs.push(...(evt.jobs ?? []))
           },
           userId,
         )
-        if (!hadPlatformError) {
-          const platformJobs = [...eventJobs, ...jobs]
-          allJobs.push(...platformJobs)
-          send({ type: 'jobs', platform, jobs: platformJobs, progress: 100 })
-        }
+        allJobs.push(...jobs)
+        send({ type: 'jobs', platform, jobs, progress: 100 })
       } catch (err) {
         send({ type: 'error', platform, error: err instanceof Error ? err.message : String(err) })
       }

@@ -6,12 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "postinstall": "npx playwright install --with-deps firefox webkit",
-    "playwright:install": "npx playwright install firefox webkit",
-    "playwright:deps": "npx playwright install-deps firefox webkit",
-    "playwright:setup": "npm run playwright:deps && npm run playwright:install",
-    "docker:build": "docker build -t jobhawk-server .",
-    "docker:run": "docker run --rm -p 3001:3001 --env-file .env jobhawk-server"
+    "postinstall": "npx playwright install firefox",
+    "playwright:install": "npx playwright install --with-deps firefox"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.78.0",

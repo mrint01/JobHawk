@@ -1,172 +1,156 @@
 # JobHawk
 
-JobHawk is a self-hosted job search and application-tracking app.
-It scrapes multiple job platforms, merges results into one dashboard, and helps users track progress from new offer to final outcome.
+A self-hosted job aggregator that scrapes **LinkedIn**, **StepStone**, and **Xing** simultaneously and presents results in a clean dashboard.
 
-## What the project currently does
+---
 
-- Aggregates job listings from `LinkedIn`, `StepStone`, `Xing`, `Indeed`, and `Jobriver`
-- Supports per-platform selection and search by job title + location
-- Streams scrape progress in real time through Server-Sent Events
-- Stores jobs per user and supports status transitions through an interview pipeline
-- Provides analytics views (time series, platforms, cities, and admin all-users views)
-- Includes login, multi-user support, and admin-only pages
-- Supports LinkedIn Agent integration for session-aware LinkedIn scraping
+## Features
 
-## Main features
+- Scrapes all 3 platforms in parallel
+- Filters by job title and location
+- Sorts results by posting time (newest first)
+- Remembers your LinkedIn session (no re-login every time)
+- Real-time progress via Server-Sent Events
 
-- **Unified dashboard**: view, filter, and manage all scraped jobs in one place
-- **Interview pipeline tracking**: statuses include `new`, `applied`, `hr_interview`, `technical_interview`, `second_technical_interview`, `refused`, and `accepted`
-- **Platform connection settings**:
-  - `LinkedIn`, `StepStone`, `Xing`: manual or headless credential connect
-  - `Indeed`, `Jobriver`: opt-in platform toggles (public listings)
-- **User analytics**:
-  - Job activity series over time
-  - Breakdown by city and platform
-  - Admin-only aggregate analytics across users
+---
 
-## Tech stack
+## Tech Stack
 
-- **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Recharts
-- **Backend**: Node.js, Express, TypeScript, WebSocket (`ws`)
-- **Scraping/automation**: Puppeteer, Playwright, Cheerio
-- **Storage/auth support**: Supabase integration for user/session data
+| Layer | Technology |
+|-------|-----------|
+| Frontend | React 18 + TypeScript + Tailwind CSS + Vite |
+| Backend | Node.js + Express + TypeScript |
+| Scraping | Puppeteer + puppeteer-extra-plugin-stealth |
+
+---
 
 ## Prerequisites
 
 - Node.js 18+
 - npm 9+
-- Supabase project (URL + service role key)
+- A LinkedIn account (for authenticated scraping)
 
-## Quick start
+---
 
-### 1) Install dependencies
+## Getting Started
+
+### 1. Clone the repo
+
+```bash
+git clone https://github.com/mrint01/JobHawk.git
+cd JobHawk
+```
+
+### 2. Install dependencies
 
 ```bash
 npm run install:all
 ```
 
-### 2) Configure environment
+### 3. Configure environment variables
 
 ```bash
+# Server
 cp server/.env.example server/.env
+
+# Client
 cp client/.env.example client/.env
 ```
 
-Edit `server/.env` and set:
+The defaults in `server/.env` work for local development — no changes needed to start.
 
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-
-Optional server settings:
-
-- `AUTH_MANUAL_CONNECT=true` for visible manual login windows
-- `AUTH_MANUAL_CONNECT=false` for headless credential login flow
-- `PUPPETEER_HEADLESS` and `PUPPETEER_SHOW_MOUSE` for scraper browser behavior
-
-### 3) Run development mode
+### 4. Run in development
 
 ```bash
 npm run dev
 ```
 
-- Frontend: `http://localhost:5173`
-- Backend API: `http://localhost:3001`
+This starts both the frontend (port 5173) and the backend (port 3001) concurrently.
+
+Open [http://localhost:5173](http://localhost:5173)
+
+---
 
 ## Scripts
 
-### Root
+| Command | Description |
+|---------|-------------|
+| `npm run dev` | Start frontend + backend in dev mode |
+| `npm run build` | Build both frontend and backend for production |
+| `npm run install:all` | Install all dependencies (client + server) |
 
-- `npm run dev` - run client and server concurrently
-- `npm run build` - build client and server
-- `npm run install:all` - install dependencies for both apps
+### Run individually
 
-### Client (`client/`)
+```bash
+# Frontend only
+cd client && npm run dev
 
-- `npm run dev` - start Vite dev server
-- `npm run build` - type-check and build frontend
-- `npm run preview` - preview built frontend
+# Backend only
+cd server && npm run dev
 
-### Server (`server/`)
+# Backend in production mode (after build)
+cd server && npm start
+```
 
-- `npm run dev` - run API with `tsx watch`
-- `npm run build` - compile TypeScript to `dist`
-- `npm start` - run compiled server
-- `npm run playwright:install` - install Playwright browsers
-- `npm run playwright:deps` - install OS dependencies required by Playwright browsers
-- `npm run playwright:setup` - install both OS deps and browsers
+---
 
-## Environment variables
+## Environment Variables
 
 ### `server/.env`
 
-- `PORT` (default `3001`)
-- `ALLOWED_ORIGINS` (default `http://localhost:5173`, comma-separated)
-- `SUPABASE_URL`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `PUPPETEER_HEADLESS`
-- `PUPPETEER_SHOW_MOUSE`
-- `AUTH_MANUAL_CONNECT`
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PORT` | `3001` | Port the API server listens on |
+| `ALLOWED_ORIGINS` | `http://localhost:5173` | CORS allowed origins (comma-separated) |
+| `PUPPETEER_HEADLESS` | `true` | Set to `false` to watch the browser while scraping |
+| `PUPPETEER_SHOW_MOUSE` | `false` | Show a red cursor dot in visible mode |
 
 ### `client/.env`
 
-- `VITE_API_URL` (set this in production; keep empty in local dev to use Vite proxy)
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VITE_API_URL` | _(empty)_ | Backend URL in production. Empty = Vite proxies to localhost:3001 |
 
-## High-level architecture
+---
 
-- `client/`: app shell, dashboard, settings, analytics, admin, interview pipeline
-- `server/src/routes/`:
-  - `auth.ts` for platform connect/disconnect and auth mode handling
-  - `scrape.ts` for platform scraping and SSE stream endpoint
-  - `jobs.ts` for job CRUD/status and analytics APIs
-  - `users.ts` for user-related endpoints
-- `server/src/scrapers/`: platform-specific scrapers
-- `server/src/utils/`: browser/session/user/job stores and LinkedIn agent hub
+## LinkedIn Authentication
+
+JobHawk requires a LinkedIn session to scrape job listings.
+
+1. Open the app → go to **Settings**
+2. Click **Connect LinkedIn**
+3. A browser window opens — log in to your LinkedIn account normally
+4. Close the window when done — your session is saved on the server
+
+Your session persists until you disconnect or it expires.
+
+---
+
+## Project Structure
+
+```
+JobHawk/
+├── client/               # React frontend
+│   ├── src/
+│   │   ├── components/   # UI components
+│   │   ├── services/     # API calls + scrapers interface
+│   │   └── context/      # React context (auth, jobs)
+│   └── vite.config.ts
+│
+├── server/               # Express backend
+│   ├── src/
+│   │   ├── scrapers/     # LinkedIn, StepStone, Xing scrapers
+│   │   ├── routes/       # API routes (scrape, auth, jobs)
+│   │   └── utils/        # Browser, sessions, job store
+│   └── tsconfig.json
+│
+└── package.json          # Root scripts (dev, build, install:all)
+```
+
+---
 
 ## Notes
 
-- LinkedIn scraping depends on an active LinkedIn Agent/session.
-- The server exposes health and debug endpoints for runtime checks.
-- A Python script (`server/scripts/linkedin_agent.py`) is provided for agent-based LinkedIn session handling.
-
-## Production note (Indeed WebKit)
-
-If Indeed fails with `libgstreamer-1.0.so.0` / `browserType.launch` errors, your server image is missing Linux shared libraries required by Playwright WebKit.
-
-Run this in `server/` during deploy (before starting the API):
-
-```bash
-npm run playwright:setup
-```
-
-Important:
-
-- Use a Debian/Ubuntu-based runtime image/VM for WebKit scraping.
-- If your CI/CD uses `npm ci --ignore-scripts`, `postinstall` is skipped, so you must run `npm run playwright:setup` explicitly.
-
-### Railway (no terminal access)
-
-For Railway + Playwright WebKit, deploy with Docker only.
-
-1. Set **Root Directory** to `server` (deploy API only; client stays separate).
-2. Builder **Dockerfile**, **Dockerfile path** `Dockerfile` (this resolves to `server/Dockerfile` when root is `server`).
-3. Redeploy.
-
-The image base is `mcr.microsoft.com/playwright:v1.59.1-jammy`, which includes the Linux shared libraries WebKit needs (`libgstreamer`, GTK, etc.).
-
-### Indeed HTTP 403
-
-Indeed often returns **403** for requests coming from **cloud / datacenter IPs** (Railway, AWS, etc.). The scraper already warms up the homepage, sends a realistic referer, retries once, and aligns the User-Agent with Linux WebKit.
-
-If you still see `Indeed returned HTTP 403`, set **`INDEED_PROXY_SERVER`** in Railway variables to an HTTP(S) proxy URL (often a residential proxy). See `server/.env.example`.
-
-### Test the production-like Docker image locally (avoid redeploy loops)
-
-From `server/` with a filled `.env`:
-
-```bash
-npm run docker:build
-npm run docker:run
-```
-
-Then hit your API on `http://localhost:3001` (same image Railway builds). Fix issues locally, push once when satisfied.
+- StepStone and Xing are scraped without authentication
+- All three platforms scrape in parallel — total time is roughly as long as the slowest one
+- Scraped results are stored locally in `server/data/jobs.json` (gitignored)

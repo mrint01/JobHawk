@@ -33,28 +33,60 @@ function indeedLaunchProxy(): LaunchOptions['proxy'] {
   }
 }
 
+function indeedNavTimeoutMs(): number {
+  const n = Number(process.env.INDEED_NAV_TIMEOUT_MS ?? '90000')
+  return Number.isFinite(n) && n >= 15_000 ? Math.floor(n) : 90_000
+}
+
+/**
+ * Prod/slow networks often miss domcontentloaded before Playwright's default deadline.
+ * Try domcontentloaded first; on timeout use commit + waitForLoadState (still proceed if partial DOM).
+ */
+async function gotoIndeed(
+  page: Page,
+  url: string,
+  opts: { referer?: string; label: string },
+): Promise<number> {
+  const timeout = indeedNavTimeoutMs()
+  const gotoOpts = { referer: opts.referer } as { referer?: string }
+
+  try {
+    const response = await page.goto(url, {
+      waitUntil: 'domcontentloaded',
+      timeout,
+      ...gotoOpts,
+    })
+    return response?.status() ?? 0
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn(`[indeed] ${opts.label}: domcontentloaded failed (${msg.slice(0, 160)}) — retrying with commit`)
+    try {
+      const response = await page.goto(url, {
+        waitUntil: 'commit',
+        timeout: Math.min(60_000, timeout),
+        ...gotoOpts,
+      })
+      await page.waitForLoadState('domcontentloaded', { timeout: Math.min(75_000, timeout + 15_000) }).catch(() => undefined)
+      return response?.status() ?? 0
+    } catch (err2) {
+      const msg2 = err2 instanceof Error ? err2.message : String(err2)
+      throw new Error(`Indeed navigation failed (${opts.label}): ${msg2}`)
+    }
+  }
+}
+
 async function navigateToIndeedJobSearch(page: Page, searchUrl: string): Promise<number> {
   const baseRoot = `${INDEED_BASE}/`
-  await page.goto(baseRoot, { waitUntil: 'domcontentloaded', timeout: 35_000 }).catch(() => undefined)
+  await gotoIndeed(page, baseRoot, { label: 'homepage' }).catch(() => undefined)
   await jitter(280, 900)
 
-  let response = await page.goto(searchUrl, {
-    waitUntil: 'domcontentloaded',
-    timeout: 55_000,
-    referer: baseRoot,
-  })
-  let status = response?.status() ?? 0
+  let status = await gotoIndeed(page, searchUrl, { referer: baseRoot, label: 'job search' })
 
   if (status === 403 || status === 401) {
     await sleep(1400 + Math.floor(Math.random() * 1400))
-    await page.goto(baseRoot, { waitUntil: 'domcontentloaded', timeout: 35_000 }).catch(() => undefined)
+    await gotoIndeed(page, baseRoot, { label: 'homepage (retry)' }).catch(() => undefined)
     await jitter(450, 1200)
-    response = await page.goto(searchUrl, {
-      waitUntil: 'domcontentloaded',
-      timeout: 55_000,
-      referer: baseRoot,
-    })
-    status = response?.status() ?? status
+    status = await gotoIndeed(page, searchUrl, { referer: baseRoot, label: 'job search (retry)' })
   }
 
   return status

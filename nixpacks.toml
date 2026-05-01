@@ -1,0 +1,12 @@
+[phases.install]
+cmds = [
+  "if [ -f server/package.json ]; then npm install --prefix server; else npm install; fi"
+]
+
+[phases.build]
+cmds = [
+  "if [ -f server/package.json ]; then npm run playwright:setup --prefix server && npm run build --prefix server; else npm run playwright:setup && npm run build; fi"
+]
+
+[start]
+cmd = "if [ -f server/package.json ]; then npm run start --prefix server; else npm run start; fi"

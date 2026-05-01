@@ -5,7 +5,7 @@
  * Scrolls the results list inside the page shell (inner scrollbar), matching LinkedIn-style UX.
  * Returns at most SCRAPE_JOBS_PER_PLATFORM_LIMIT (10) jobs, newest-first by postedDate.
  */
-import { firefox, type Browser, type BrowserContext, type Page } from 'playwright'
+import { firefox, type Browser, type BrowserContext, type LaunchOptions, type Page } from 'playwright'
 import { jitter, sleep } from '../utils/browser'
 import { nanoid } from '../utils/nanoid'
 import { subMinutes, subHours, subDays, subWeeks, parseISO, isValid } from 'date-fns'
@@ -14,6 +14,51 @@ import type { ScrapedJob, ProgressCallback } from './types'
 import { limitScrapedJobs, SCRAPE_JOBS_PER_PLATFORM_LIMIT } from './limits'
 
 const INDEED_BASE = (process.env.INDEED_BASE_URL ?? 'https://de.indeed.com').replace(/\/$/, '')
+
+/** HTTP(S) proxy when Indeed returns 403 (datacenter IP). Example: http://user:pass@host:port */
+function indeedLaunchProxy(): LaunchOptions['proxy'] {
+  const raw = process.env.INDEED_PROXY_SERVER?.trim()
+  if (!raw) return undefined
+  try {
+    const normalized = raw.includes('://') ? raw : `http://${raw}`
+    const u = new URL(normalized)
+    const server = `${u.protocol}//${u.hostname}${u.port ? `:${u.port}` : ''}`
+    const username = u.username ? decodeURIComponent(u.username) : undefined
+    const password = u.password ? decodeURIComponent(u.password) : undefined
+    if (username || password) return { server, username, password }
+    return { server }
+  } catch {
+    console.warn('[indeed] invalid INDEED_PROXY_SERVER — ignoring')
+    return undefined
+  }
+}
+
+async function navigateToIndeedJobSearch(page: Page, searchUrl: string): Promise<number> {
+  const baseRoot = `${INDEED_BASE}/`
+  await page.goto(baseRoot, { waitUntil: 'domcontentloaded', timeout: 35_000 }).catch(() => undefined)
+  await jitter(280, 900)
+
+  let response = await page.goto(searchUrl, {
+    waitUntil: 'domcontentloaded',
+    timeout: 55_000,
+    referer: baseRoot,
+  })
+  let status = response?.status() ?? 0
+
+  if (status === 403 || status === 401) {
+    await sleep(1400 + Math.floor(Math.random() * 1400))
+    await page.goto(baseRoot, { waitUntil: 'domcontentloaded', timeout: 35_000 }).catch(() => undefined)
+    await jitter(450, 1200)
+    response = await page.goto(searchUrl, {
+      waitUntil: 'domcontentloaded',
+      timeout: 55_000,
+      referer: baseRoot,
+    })
+    status = response?.status() ?? status
+  }
+
+  return status
+}
 
 const CONTRACT_TOKENS_DE = [
   'Vollzeit',
@@ -356,20 +401,24 @@ export async function scrapeIndeed(
   let context: BrowserContext | null = null
   let page: Page | null = null
   try {
-    browser = await firefox.launch({ headless: process.env.PUPPETEER_HEADLESS !== 'false' })
+    browser = await firefox.launch({
+      headless: process.env.PUPPETEER_HEADLESS !== 'false',
+      proxy: indeedLaunchProxy(),
+    })
     context = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
+      viewport: { width: 1366, height: 768 },
       locale: 'de-DE',
-      extraHTTPHeaders: { 'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8' },
+      timezoneId: 'Europe/Berlin',
+      extraHTTPHeaders: {
+        'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Upgrade-Insecure-Requests': '1',
+      },
     })
     page = await context.newPage()
 
     const url = buildIndeedSearchUrl(jobTitle, location)
-    const response = await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45_000 })
-    const status = response?.status() ?? 0
-    if (status >= 400) {
-      throw new Error(`Indeed returned HTTP ${status}`)
-    }
+    const httpStatus = await navigateToIndeedJobSearch(page, url)
 
     await sleep(1600)
     await tryDismissConsent(page)
@@ -388,7 +437,16 @@ export async function scrapeIndeed(
       }
     }
 
-    mergeExtracted(await extractIndeed(page))
+    const firstBatch = await extractIndeed(page)
+    if (httpStatus >= 400 && firstBatch.length === 0) {
+      const hint =
+        httpStatus === 403
+          ? ' Try INDEED_PROXY_SERVER or scrape from a different network/IP.'
+          : ''
+      throw new Error(`Indeed returned HTTP ${httpStatus}.${hint}`)
+    }
+
+    mergeExtracted(firstBatch)
 
     for (let round = 0; round < 48; round++) {
       if (merged.size >= SCRAPE_JOBS_PER_PLATFORM_LIMIT) break

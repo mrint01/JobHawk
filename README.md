@@ -153,3 +153,20 @@ For Railway + Playwright WebKit, deploy with Docker only.
 3. Redeploy.
 
 The image base is `mcr.microsoft.com/playwright:v1.59.1-jammy`, which includes the Linux shared libraries WebKit needs (`libgstreamer`, GTK, etc.).
+
+### Indeed HTTP 403
+
+Indeed often returns **403** for requests coming from **cloud / datacenter IPs** (Railway, AWS, etc.). The scraper already warms up the homepage, sends a realistic referer, retries once, and aligns the User-Agent with Linux WebKit.
+
+If you still see `Indeed returned HTTP 403`, set **`INDEED_PROXY_SERVER`** in Railway variables to an HTTP(S) proxy URL (often a residential proxy). See `server/.env.example`.
+
+### Test the production-like Docker image locally (avoid redeploy loops)
+
+From `server/` with a filled `.env`:
+
+```bash
+npm run docker:build
+npm run docker:run
+```
+
+Then hit your API on `http://localhost:3001` (same image Railway builds). Fix issues locally, push once when satisfied.

@@ -9,7 +9,9 @@
     "postinstall": "npx playwright install --with-deps firefox webkit",
     "playwright:install": "npx playwright install firefox webkit",
     "playwright:deps": "npx playwright install-deps firefox webkit",
-    "playwright:setup": "npm run playwright:deps && npm run playwright:install"
+    "playwright:setup": "npm run playwright:deps && npm run playwright:install",
+    "docker:build": "docker build -t jobhawk-server .",
+    "docker:run": "docker run --rm -p 3001:3001 --env-file .env jobhawk-server"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.78.0",

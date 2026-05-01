@@ -146,11 +146,9 @@ Important:
 
 ### Railway (no terminal access)
 
-This repo now includes `nixpacks.toml` so Railway runs Playwright setup automatically during build:
+For Railway + Playwright WebKit, deploy with Docker only.
 
-- installs server dependencies
-- runs `playwright:setup` (OS deps + browsers)
-- builds the server
-- starts the API
+1. Ensure Railway uses the repository `Dockerfile` as the builder.
+2. Redeploy.
 
-After pulling latest changes, trigger a **Redeploy** in Railway.
+The provided `Dockerfile` is based on `mcr.microsoft.com/playwright:v1.59.1-jammy`, which already includes the Linux shared libraries required by WebKit (`libgstreamer`, GTK, etc.).

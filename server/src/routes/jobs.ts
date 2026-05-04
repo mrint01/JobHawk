@@ -4,6 +4,7 @@ import {
   markAppliedForUser,
   markUnappliedForUser,
   markStatusForUser,
+  updateJobInterviewForUser,
   clearJobsForUser,
   clearNewJobOffersForUser,
   deleteJobForUser,
@@ -55,7 +56,50 @@ router.patch('/:id/status', async (req: Request, res: Response) => {
     res.status(400).json({ error: 'Invalid status' })
     return
   }
-  res.json(await markStatusForUser(getUserId(req), String(req.params.id), status as JobStatus))
+  let opts: { interviewAt?: string | null } | undefined
+  const body = req.body as Record<string, unknown>
+  if (body && typeof body === 'object' && 'interviewAt' in body) {
+    const v = body.interviewAt
+    if (v === null || v === '') opts = { interviewAt: null }
+    else if (typeof v === 'string') {
+      const d = new Date(v)
+      if (Number.isNaN(d.getTime())) {
+        res.status(400).json({ error: 'Invalid interviewAt' })
+        return
+      }
+      opts = { interviewAt: d.toISOString() }
+    }
+  }
+  res.json(await markStatusForUser(getUserId(req), String(req.params.id), status as JobStatus, opts))
+})
+
+router.patch('/:id/interview', async (req: Request, res: Response) => {
+  const id = String(req.params.id)
+  const body = req.body as Record<string, unknown>
+  const hasAt = body && typeof body === 'object' && 'interviewAt' in body
+  const hasNotes = body && typeof body === 'object' && 'interviewNotes' in body
+  if (!hasAt && !hasNotes) {
+    res.status(400).json({ error: 'No interview fields to update' })
+    return
+  }
+  const patch: { interviewAt?: string | null; interviewNotes?: string | null } = {}
+  if (hasAt) {
+    const raw = body.interviewAt
+    if (raw === null || raw === '') patch.interviewAt = null
+    else if (typeof raw === 'string') {
+      const d = new Date(raw)
+      if (Number.isNaN(d.getTime())) {
+        res.status(400).json({ error: 'Invalid interviewAt' })
+        return
+      }
+      patch.interviewAt = d.toISOString()
+    }
+  }
+  if (hasNotes) {
+    const n = body.interviewNotes
+    patch.interviewNotes = n === null || n === '' ? null : typeof n === 'string' ? n : null
+  }
+  res.json(await updateJobInterviewForUser(getUserId(req), id, patch))
 })
 
 router.delete('/:id', async (req: Request, res: Response) => {
@@ -72,17 +116,20 @@ router.get('/analytics/series', async (req: Request, res: Response) => {
   const fromRaw = String(req.query.from ?? '')
   const from = new Date(fromRaw)
   const safeFrom = Number.isNaN(from.getTime()) ? new Date(0) : from
+  const toRaw = String(req.query.to ?? '')
+  const toParsed = new Date(toRaw)
+  const safeTo = toRaw && !Number.isNaN(toParsed.getTime()) ? toParsed : null
   const city = String(req.query.city ?? '').trim()
   const cityFilter = city.length > 0 ? city : undefined
 
   const rawTarget = String(req.query.targetUserId ?? '')
   if (rawTarget === 'all' && (await isAdmin(requesterId))) {
-    res.json(await analyticsAllUsersSeries(safeFrom, cityFilter))
+    res.json(await analyticsAllUsersSeries(safeFrom, cityFilter, safeTo))
     return
   }
   const userId =
     rawTarget && rawTarget !== requesterId && (await isAdmin(requesterId)) ? rawTarget : requesterId
-  res.json(await analyticsByUser(userId, safeFrom, cityFilter))
+  res.json(await analyticsByUser(userId, safeFrom, cityFilter, safeTo))
 })
 
 router.get('/analytics/users', async (req: Request, res: Response) => {

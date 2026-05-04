@@ -96,6 +96,9 @@ export async function mergeJobsForUser(userId: string, incoming: ScrapedJob[]): 
         scraped_at: new Date().toISOString(),
         status: 'new',
         applied_at: null,
+        interview_at: null,
+        interview_notes: null,
+        interview_reminder_sent_at: null,
       })
     } else {
       upserts.push({
@@ -113,6 +116,9 @@ export async function mergeJobsForUser(userId: string, incoming: ScrapedJob[]): 
         scraped_at: new Date().toISOString(),
         status: existingJob.status,
         applied_at: existingJob.appliedAt || null,
+        interview_at: existingJob.interviewAt ?? null,
+        interview_notes: existingJob.interviewNotes ?? null,
+        interview_reminder_sent_at: existingJob.interviewReminderSentAt ?? null,
       })
     }
   }
@@ -147,7 +153,12 @@ export async function markUnappliedForUser(userId: string, id: string): Promise<
   return readJobsForUser(userId)
 }
 
-export async function markStatusForUser(userId: string, id: string, status: Job['status']): Promise<Job[]> {
+export async function markStatusForUser(
+  userId: string,
+  id: string,
+  status: Job['status'],
+  opts?: { interviewAt?: string | null },
+): Promise<Job[]> {
   const { data: current } = await supabase
     .from('jobs')
     .select('applied_at')
@@ -159,11 +170,29 @@ export async function markStatusForUser(userId: string, id: string, status: Job[
   const nextAppliedAt =
     status === 'new' ? null : (currentAppliedAt ?? new Date().toISOString())
 
-  await supabase
-    .from('jobs')
-    .update({ status, applied_at: nextAppliedAt })
-    .eq('id', id)
-    .eq('user_id', userId)
+  const updatePayload: Record<string, unknown> = { status, applied_at: nextAppliedAt }
+  if (opts && 'interviewAt' in opts) {
+    updatePayload.interview_at = opts.interviewAt ?? null
+    updatePayload.interview_reminder_sent_at = null
+  }
+
+  await supabase.from('jobs').update(updatePayload).eq('id', id).eq('user_id', userId)
+  return readJobsForUser(userId)
+}
+
+export async function updateJobInterviewForUser(
+  userId: string,
+  id: string,
+  patch: { interviewAt?: string | null; interviewNotes?: string | null },
+): Promise<Job[]> {
+  const updates: Record<string, unknown> = {}
+  if ('interviewAt' in patch) {
+    updates.interview_at = patch.interviewAt ?? null
+    updates.interview_reminder_sent_at = null
+  }
+  if ('interviewNotes' in patch) updates.interview_notes = patch.interviewNotes ?? null
+  if (Object.keys(updates).length === 0) return readJobsForUser(userId)
+  await supabase.from('jobs').update(updates).eq('id', id).eq('user_id', userId)
   return readJobsForUser(userId)
 }
 
@@ -196,13 +225,15 @@ export interface AnalyticsPlatformBucket {
   appliedCount: number
 }
 
-export async function analyticsByUser(userId: string, from: Date, city?: string): Promise<AnalyticsBucket[]> {
-  const { data } = await supabase
+export async function analyticsByUser(userId: string, from: Date, city?: string, to?: Date | null): Promise<AnalyticsBucket[]> {
+  let q = supabase
     .from('jobs')
     .select('applied_at, location')
     .eq('user_id', userId)
     .in('status', APPLICATION_STATUSES)
     .gte('applied_at', from.toISOString())
+  if (to && !Number.isNaN(to.getTime())) q = q.lte('applied_at', to.toISOString())
+  const { data } = await q
   const targetCity = city ? normalizeCity(city) : ''
   return buildBuckets(
     (data ?? [])
@@ -211,12 +242,14 @@ export async function analyticsByUser(userId: string, from: Date, city?: string)
   )
 }
 
-export async function analyticsAllUsersSeries(from: Date, city?: string): Promise<AnalyticsBucket[]> {
-  const { data } = await supabase
+export async function analyticsAllUsersSeries(from: Date, city?: string, to?: Date | null): Promise<AnalyticsBucket[]> {
+  let q = supabase
     .from('jobs')
     .select('applied_at, location')
     .in('status', APPLICATION_STATUSES)
     .gte('applied_at', from.toISOString())
+  if (to && !Number.isNaN(to.getTime())) q = q.lte('applied_at', to.toISOString())
+  const { data } = await q
   const targetCity = city ? normalizeCity(city) : ''
   return buildBuckets(
     (data ?? [])
@@ -363,5 +396,8 @@ function dbRowToJob(row: Record<string, unknown>): Job {
     scrapedAt: row.scraped_at as string,
     status: row.status as Job['status'],
     appliedAt: row.applied_at as string | undefined,
+    interviewAt: row.interview_at as string | undefined,
+    interviewNotes: row.interview_notes as string | undefined,
+    interviewReminderSentAt: row.interview_reminder_sent_at as string | undefined,
   }
 }

@@ -11,6 +11,7 @@ import {
   markJobAppliedApi,
   markJobUnappliedApi,
   updateJobStatusApi,
+  updateJobInterviewApi,
   clearJobsApi,
   clearJobOffersApi,
   deleteJobApi,
@@ -56,7 +57,8 @@ interface AppContextValue {
   pipelineJobs: Job[]
   markApplied: (id: string) => void
   markUnapplied: (id: string) => void
-  updateJobStatus: (id: string, status: JobStatus) => void
+  updateJobStatus: (id: string, status: JobStatus, opts?: { interviewAt?: string | null }) => void
+  updateJobInterview: (id: string, patch: { interviewAt?: string | null; interviewNotes?: string | null }) => void
   deleteJob: (id: string) => Promise<void>
   clearJobs: () => void
   clearJobOffers: () => void
@@ -255,9 +257,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setJobs((prev) => prev.map((j) => j.id === id ? { ...j, status: 'new' as const, appliedAt: undefined } : j))
   }, [appState.userId])
 
-  const updateJobStatus = useCallback((id: string, status: JobStatus) => {
+  const updateJobStatus = useCallback((id: string, status: JobStatus, opts?: { interviewAt?: string | null }) => {
     if (!appState.userId) return
-    updateJobStatusApi(id, status, appState.userId).then((updated) => {
+    const interviewAt = opts?.interviewAt
+    updateJobStatusApi(id, status, appState.userId, interviewAt).then((updated) => {
       if (updated.length > 0) setJobs(updated)
     }).catch(() => undefined)
     setJobs((prev) =>
@@ -265,7 +268,39 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         if (j.id !== id) return j
         const nextAppliedAt =
           status === 'new' ? undefined : (j.appliedAt ?? new Date().toISOString())
-        return { ...j, status, appliedAt: nextAppliedAt }
+        const nextInterviewAt =
+          interviewAt !== undefined
+            ? (interviewAt ?? undefined)
+            : j.interviewAt
+        return {
+          ...j,
+          status,
+          appliedAt: nextAppliedAt,
+          interviewAt: nextInterviewAt,
+          ...(interviewAt !== undefined ? { interviewReminderSentAt: undefined } : {}),
+        }
+      }),
+    )
+  }, [appState.userId])
+
+  const updateJobInterview = useCallback((id: string, patch: { interviewAt?: string | null; interviewNotes?: string | null }) => {
+    if (!appState.userId) return
+    updateJobInterviewApi(id, patch, appState.userId).then((updated) => {
+      if (updated?.length) setJobs(updated)
+    }).catch(() => undefined)
+    setJobs((prev) =>
+      prev.map((j) => {
+        if (j.id !== id) return j
+        let next = { ...j }
+        if ('interviewAt' in patch) {
+          next = {
+            ...next,
+            interviewAt: patch.interviewAt ?? undefined,
+            interviewReminderSentAt: undefined,
+          }
+        }
+        if ('interviewNotes' in patch) next = { ...next, interviewNotes: patch.interviewNotes ?? undefined }
+        return next
       }),
     )
   }, [appState.userId])
@@ -320,7 +355,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       activePage, setActivePage, sidebarOpen, setSidebarOpen, toggleSidebar,
       connectPlatform, disconnectPlatform, connectedPlatforms, platformConnecting,
       linkedinAgent, refreshLinkedInAgent, setLinkedInEnabled,
-      jobs, newJobs, appliedJobs, pipelineJobs, isJobsLoading, markApplied, markUnapplied, updateJobStatus, deleteJob, clearJobs, clearJobOffers,
+      jobs, newJobs, appliedJobs, pipelineJobs, isJobsLoading, markApplied, markUnapplied, updateJobStatus, updateJobInterview, deleteJob, clearJobs, clearJobOffers,
       scrapeProgress, isScraping, startScrape, toasts, addToast, removeToast,
     }}>
       {children}

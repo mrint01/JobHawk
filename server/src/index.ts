@@ -28,6 +28,7 @@ import {
   requestAgentSessionCheck,
   waitForAgentConnection,
 } from './utils/linkedinAgentHub'
+import { sendInterviewReminderEmails } from './utils/interviewReminders'
 
 const PORT = Number(process.env.PORT ?? 3001)
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173')
@@ -146,6 +147,11 @@ app.get('/api/debug/screenshot/:filename', (req, res) => {
   }
 })
 
+// ── Interview email reminders (~every 15 min; requires SMTP_* env + migration 006) ─
+setInterval(() => {
+  void sendInterviewReminderEmails()
+}, 15 * 60 * 1000)
+
 // ── LinkedIn session watchdog (every 30 min) ─────────────────────────────────
 setInterval(() => {
   if (!hasSession('admin', 'linkedin')) return
@@ -250,10 +256,18 @@ async function start() {
     })
   })
 
+  void sendInterviewReminderEmails()
+
   server.listen(PORT, () => {
     console.log(`✅  JobHawk API  →  http://localhost:${PORT}`)
     console.log(`   Allowed origins: ${ALLOWED_ORIGINS.join(', ')}`)
     console.log(`   LinkedIn agent WS: ws://localhost:${PORT}/ws/linkedin-agent`)
+    const smtpOk = Boolean(process.env.SMTP_HOST?.trim() && process.env.SMTP_FROM?.trim())
+    console.log(
+      smtpOk
+        ? '   Interview reminders: SMTP env set (check server logs if mail fails)'
+        : '   Interview reminders: off — set SMTP_HOST + SMTP_FROM in server/.env (see .env.example)',
+    )
   })
 
   async function shutdown() {

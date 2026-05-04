@@ -2,11 +2,11 @@ import { useEffect, useState } from 'react'
 import {
   Sun, Moon, AlertCircle, Check, KeyRound,
   Unlink, Wifi, Loader2, Eye, EyeOff, WifiOff,
-  Download, MonitorCheck,
+  Download, MonitorCheck, Mail,
 } from 'lucide-react'
 import type { Platform } from '../types'
 import { useApp } from '../context/AppContext'
-import { getLinkedInAgentDownloadUrl } from '../services/api'
+import { fetchUserProfileApi, getLinkedInAgentDownloadUrl, patchUserPreferencesApi } from '../services/api'
 
 // ── Server offline banner ─────────────────────────────────────────────────────
 function ServerBanner() {
@@ -51,6 +51,68 @@ function Section({
 }
 
 // ── Appearance ────────────────────────────────────────────────────────────────
+function NotificationsSection() {
+  const { appState, serverOnline, addToast } = useApp()
+  const [loading, setLoading] = useState(true)
+  const [enabled, setEnabled] = useState(true)
+
+  useEffect(() => {
+    if (!appState.userId || !serverOnline) {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    fetchUserProfileApi(appState.userId).then((p) => {
+      if (p) setEnabled(p.emailInterviewReminders)
+      setLoading(false)
+    })
+  }, [appState.userId, serverOnline])
+
+  async function toggle(next: boolean) {
+    if (!appState.userId) return
+    const prev = enabled
+    setEnabled(next)
+    const ok = await patchUserPreferencesApi(appState.userId, next)
+    if (!ok) {
+      addToast('Could not save notification preference.', 'error')
+      setEnabled(prev)
+    }
+  }
+
+  return (
+    <Section
+      title="Notifications"
+      description="Receive one email reminder per scheduled interview (sent roughly 24 hours before). Your admin must configure outbound SMTP on the API server."
+    >
+      <label className="flex items-start gap-4 cursor-pointer rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/80 dark:bg-slate-800/40 p-4 hover:border-blue-300 dark:hover:border-blue-500/30 transition-colors max-w-lg">
+        <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
+          <Mail className="w-5 h-5" />
+        </span>
+        <div className="flex-1 min-w-0 space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <p className="text-sm font-semibold text-gray-900 dark:text-white">Interview email reminders</p>
+              <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+                Uses your account email ({appState.email || '—'}). Turn off anytime.
+              </p>
+            </div>
+            <input
+              type="checkbox"
+              className="h-5 w-5 rounded border-gray-300 dark:border-slate-600 text-blue-600 focus:ring-blue-500 cursor-pointer disabled:opacity-50"
+              checked={enabled}
+              disabled={loading || !serverOnline || !appState.userId}
+              onChange={(e) => void toggle(e.target.checked)}
+            />
+          </div>
+          {!serverOnline && (
+            <p className="text-xs text-amber-600 dark:text-amber-400">Connect to the backend to load and save this preference.</p>
+          )}
+        </div>
+      </label>
+    </Section>
+  )
+}
+
 function AppearanceSection() {
   const { theme, setTheme } = useApp()
 
@@ -768,6 +830,7 @@ export default function SettingsPage() {
       </div>
 
       <ServerBanner />
+      <NotificationsSection />
       <AppearanceSection />
       <SecuritySection />
       <PlatformSection />

@@ -88,6 +88,36 @@ export async function readUsers(): Promise<UserRecord[]> {
   return (data ?? []) as UserRecord[]
 }
 
+export interface UserProfile {
+  id: string
+  username: string
+  email: string
+  role: UserRole
+  emailInterviewReminders: boolean
+}
+
+export async function readUserProfile(userId: string): Promise<UserProfile | null> {
+  const { data } = await supabase
+    .from('users')
+    .select('id, username, email, role, email_interview_reminders')
+    .eq('id', userId)
+    .eq('status', 'active')
+    .maybeSingle()
+  if (!data) return null
+  return {
+    id: data.id as string,
+    username: data.username as string,
+    email: data.email as string,
+    role: data.role as UserRole,
+    emailInterviewReminders: (data.email_interview_reminders as boolean | null | undefined) !== false,
+  }
+}
+
+export async function setUserEmailInterviewReminders(userId: string, enabled: boolean): Promise<boolean> {
+  const { error } = await supabase.from('users').update({ email_interview_reminders: enabled }).eq('id', userId)
+  return !error
+}
+
 export async function isAdmin(userId: string): Promise<boolean> {
   const { data } = await supabase.from('users').select('role').eq('id', userId).eq('status', 'active').maybeSingle()
   return data?.role === 'admin'

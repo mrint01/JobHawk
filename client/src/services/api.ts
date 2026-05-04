@@ -116,17 +116,73 @@ export async function markJobUnappliedApi(id: string, userId?: string): Promise<
   }
 }
 
-export async function updateJobStatusApi(id: string, status: JobStatus, userId?: string): Promise<Job[]> {
+export async function updateJobStatusApi(
+  id: string,
+  status: JobStatus,
+  userId?: string,
+  interviewAt?: string | null,
+): Promise<Job[]> {
   try {
+    const body: { status: JobStatus; interviewAt?: string | null } = { status }
+    if (interviewAt !== undefined) body.interviewAt = interviewAt
     const res = await fetch(`${BASE}/api/jobs/${id}/status`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', ...userHeaders(userId) },
-      body: JSON.stringify({ status }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) return []
     return await res.json() as Job[]
   } catch {
     return []
+  }
+}
+
+export async function updateJobInterviewApi(
+  id: string,
+  patch: { interviewAt?: string | null; interviewNotes?: string | null },
+  userId?: string,
+): Promise<Job[] | null> {
+  try {
+    const res = await fetch(`${BASE}/api/jobs/${id}/interview`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...userHeaders(userId) },
+      body: JSON.stringify(patch),
+    })
+    if (!res.ok) return null
+    return await res.json() as Job[]
+  } catch {
+    return null
+  }
+}
+
+export interface UserProfile {
+  id: string
+  username: string
+  email: string
+  role: 'admin' | 'user'
+  emailInterviewReminders: boolean
+}
+
+export async function fetchUserProfileApi(userId: string): Promise<UserProfile | null> {
+  try {
+    const res = await fetch(`${BASE}/api/users/me`, { headers: userHeaders(userId) })
+    if (!res.ok) return null
+    return await res.json() as UserProfile
+  } catch {
+    return null
+  }
+}
+
+export async function patchUserPreferencesApi(userId: string, emailInterviewReminders: boolean): Promise<boolean> {
+  try {
+    const res = await fetch(`${BASE}/api/users/me/preferences`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', ...userHeaders(userId) },
+      body: JSON.stringify({ emailInterviewReminders }),
+    })
+    return res.ok
+  } catch {
+    return false
   }
 }
 
@@ -229,9 +285,16 @@ export async function setUserStatusApi(id: string, status: 'active' | 'disabled'
   }
 }
 
-export async function fetchAnalyticsSeriesApi(userId: string, from: string, targetUserId?: string, city?: string): Promise<Array<{ date: string; appliedCount: number }>> {
+export async function fetchAnalyticsSeriesApi(
+  userId: string,
+  from: string,
+  targetUserId?: string,
+  city?: string,
+  to?: string,
+): Promise<Array<{ date: string; appliedCount: number }>> {
   try {
     const params = new URLSearchParams({ from })
+    if (to) params.set('to', to)
     if (targetUserId) params.set('targetUserId', targetUserId)
     if (city) params.set('city', city)
     const res = await fetch(`${BASE}/api/jobs/analytics/series?${params}`, {

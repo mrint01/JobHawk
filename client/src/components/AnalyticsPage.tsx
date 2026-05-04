@@ -3,13 +3,14 @@ import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContai
 import { useApp } from '../context/AppContext'
 import { fetchAnalyticsCitiesApi, fetchAnalyticsPlatformsApi, fetchAnalyticsSeriesApi, fetchUsersApi, type AuthUser } from '../services/api'
 
-type Period = 'today' | 'last_day' | 'last_week' | 'last_month'
+type Period = 'today' | 'last_day' | 'last_week' | 'last_month' | 'custom'
 
 const PERIOD_LABELS: Record<Period, string> = {
   today: 'TODAY',
   last_day: 'YESTERDAY',
   last_week: 'LAST 7 DAYS',
   last_month: 'LAST 30 DAYS',
+  custom: 'CUSTOM RANGE',
 }
 
 function periodStart(period: Period): string {
@@ -31,11 +32,48 @@ function StatTile({ label, value }: { label: string; value: number }) {
   )
 }
 
+function CustomRangeFields({
+  customFrom,
+  customTo,
+  setCustomFrom,
+  setCustomTo,
+}: {
+  customFrom: string
+  customTo: string
+  setCustomFrom: (v: string) => void
+  setCustomTo: (v: string) => void
+}) {
+  return (
+    <div className="flex flex-wrap gap-4 pt-1">
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-gray-500 dark:text-slate-400">From</span>
+        <input
+          type="date"
+          className="input text-sm py-2 w-[155px]"
+          value={customFrom}
+          onChange={(e) => setCustomFrom(e.target.value)}
+        />
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className="text-xs font-medium text-gray-500 dark:text-slate-400">To</span>
+        <input
+          type="date"
+          className="input text-sm py-2 w-[155px]"
+          value={customTo}
+          onChange={(e) => setCustomTo(e.target.value)}
+        />
+      </label>
+    </div>
+  )
+}
+
 export default function AnalyticsPage() {
   const { appState } = useApp()
   const isAdmin = appState.role === 'admin'
 
   const [period, setPeriod] = useState<Period>('last_month')
+  const [customFrom, setCustomFrom] = useState('')
+  const [customTo, setCustomTo] = useState('')
   const [users, setUsers] = useState<AuthUser[]>([])
   // null = all users (admin aggregate), string = specific userId
   const [selectedViewUserId, setSelectedViewUserId] = useState<string | null>(null)
@@ -44,7 +82,19 @@ export default function AnalyticsPage() {
   const [cityBuckets, setCityBuckets] = useState<Array<{ city: string; appliedCount: number }>>([])
   const [platformBuckets, setPlatformBuckets] = useState<Array<{ platform: string; appliedCount: number }>>([])
   const [selectedCity, setSelectedCity] = useState<string>('')
-  const from = useMemo(() => periodStart(period), [period])
+  const from = useMemo(() => {
+    if (period === 'custom') {
+      if (!customFrom) return periodStart('last_month')
+      return new Date(`${customFrom}T00:00:00.000Z`).toISOString()
+    }
+    return periodStart(period)
+  }, [period, customFrom])
+
+  const seriesTo = useMemo(() => {
+    if (period !== 'custom' || !customTo) return undefined
+    const d = new Date(`${customTo}T23:59:59.999Z`)
+    return Number.isNaN(d.getTime()) ? undefined : d.toISOString()
+  }, [period, customTo])
 
   // targetUserId for API calls
   const targetUserId = isAdmin ? (selectedViewUserId ?? 'all') : undefined
@@ -55,11 +105,11 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     if (!appState.userId) return
-    fetchAnalyticsSeriesApi(appState.userId, from, targetUserId, selectedCity || undefined).then(setSeries)
+    fetchAnalyticsSeriesApi(appState.userId, from, targetUserId, selectedCity || undefined, seriesTo).then(setSeries)
     fetchAnalyticsSeriesApi(appState.userId, '1970-01-01T00:00:00.000Z', targetUserId, selectedCity || undefined).then(setAllTimeSeries)
     fetchAnalyticsCitiesApi(appState.userId, '1970-01-01T00:00:00.000Z', targetUserId).then(setCityBuckets)
     fetchAnalyticsPlatformsApi(appState.userId, '1970-01-01T00:00:00.000Z', targetUserId).then(setPlatformBuckets)
-  }, [appState.userId, isAdmin, from, targetUserId, selectedCity])
+  }, [appState.userId, isAdmin, from, seriesTo, targetUserId, selectedCity])
 
   useEffect(() => {
     setSelectedCity('')
@@ -92,23 +142,40 @@ export default function AnalyticsPage() {
     const dataMap = new Map(series.map((item) => [item.date, item.appliedCount]))
     const dates: { date: string; count: number; label: string }[] = []
 
-    // Use UTC throughout — server buckets applied_at by UTC date
     const cursor = new Date(from)
     cursor.setUTCHours(0, 0, 0, 0)
-    const end = new Date()
-    end.setUTCHours(0, 0, 0, 0)
+    const end = (() => {
+      if (period === 'custom' && customTo) {
+        const d = new Date(`${customTo}T00:00:00.000Z`)
+        if (!Number.isNaN(d.getTime())) {
+          d.setUTCHours(0, 0, 0, 0)
+          return d
+        }
+      }
+      const e = new Date()
+      e.setUTCHours(0, 0, 0, 0)
+      return e
+    })()
+
+    if (cursor > end) return dates
 
     while (cursor <= end) {
-      const key = cursor.toISOString().slice(0, 10) // UTC date key, matches server
+      const key = cursor.toISOString().slice(0, 10)
       dates.push({
         date: key,
         count: dataMap.get(key) ?? 0,
-        label: new Date(key + 'T00:00:00Z').toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }),
+        label: new Date(`${key}T00:00:00Z`).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', timeZone: 'UTC' }),
       })
       cursor.setUTCDate(cursor.getUTCDate() + 1)
     }
     return dates
-  }, [series, from])
+  }, [series, from, period, customTo])
+
+  function resetChartFilters() {
+    setPeriod('last_month')
+    setCustomFrom('')
+    setCustomTo('')
+  }
 
   const cityTotal = cityBuckets.find((bucket) => bucket.city === selectedCity)?.appliedCount ?? 0
   const platformLabel: Record<string, string> = {
@@ -139,13 +206,19 @@ export default function AnalyticsPage() {
           </span>
         </div>
 
-        {/* Period selector + optional admin user filter */}
-        <div className="flex flex-wrap gap-4 items-center">
+        {/* Filters: grid keeps Chart period / City columns fixed; custom dates on row 2 */}
+        <div
+          className={
+            isAdmin
+              ? 'grid w-full grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-[240px_220px_minmax(160px,240px)_auto]'
+              : 'grid w-full grid-cols-1 gap-x-8 gap-y-4 md:grid-cols-[220px_minmax(160px,240px)_auto]'
+          }
+        >
           {isAdmin && (
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-gray-500 dark:text-slate-400 whitespace-nowrap">Users</span>
+            <div className="flex flex-col gap-2 w-full max-w-[240px] md:col-start-1 md:row-start-1">
+              <span className="text-sm font-medium text-gray-700 dark:text-slate-300">Users</span>
               <select
-                className="input max-w-[200px]"
+                className="input w-full"
                 value={selectedViewUserId ?? ''}
                 onChange={(e) => setSelectedViewUserId(e.target.value === '' ? null : e.target.value)}
               >
@@ -156,24 +229,73 @@ export default function AnalyticsPage() {
               </select>
             </div>
           )}
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-500 dark:text-slate-400 whitespace-nowrap">Chart period</span>
-            <select className="input max-w-[190px]" value={period} onChange={(e) => setPeriod(e.target.value as Period)}>
+
+          {period === 'custom' && isAdmin && (
+            <div className="w-full max-w-[340px] md:col-start-1 md:row-start-2">
+              <CustomRangeFields
+                customFrom={customFrom}
+                customTo={customTo}
+                setCustomFrom={setCustomFrom}
+                setCustomTo={setCustomTo}
+              />
+            </div>
+          )}
+
+          <div
+            className={
+              isAdmin
+                ? 'flex flex-col gap-2 w-full max-w-[220px] md:col-start-2 md:row-start-1'
+                : 'flex flex-col gap-2 w-full max-w-[220px] md:col-start-1 md:row-start-1'
+            }
+          >
+            <span className="text-sm font-medium text-gray-700 dark:text-slate-300">Chart period</span>
+            <select className="input w-full" value={period} onChange={(e) => setPeriod(e.target.value as Period)}>
               <option value="today">Today</option>
               <option value="last_day">Yesterday</option>
               <option value="last_week">Last 7 days</option>
               <option value="last_month">Last 30 days</option>
+              <option value="custom">Custom range</option>
             </select>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-sm text-gray-500 dark:text-slate-400 whitespace-nowrap">City</span>
-            <select className="input max-w-[220px]" value={selectedCity} onChange={(e) => setSelectedCity(e.target.value)}>
+
+          {period === 'custom' && !isAdmin && (
+            <div className="w-full max-w-[340px] md:col-start-1 md:row-start-2">
+              <CustomRangeFields
+                customFrom={customFrom}
+                customTo={customTo}
+                setCustomFrom={setCustomFrom}
+                setCustomTo={setCustomTo}
+              />
+            </div>
+          )}
+
+          <div
+            className={
+              isAdmin
+                ? 'flex flex-col gap-2 w-full max-w-[240px] md:col-start-3 md:row-start-1'
+                : 'flex flex-col gap-2 w-full max-w-[240px] md:col-start-2 md:row-start-1'
+            }
+          >
+            <span className="text-sm font-medium text-gray-700 dark:text-slate-300">City</span>
+            <select className="input w-full" value={selectedCity} onChange={(e) => setSelectedCity(e.target.value)}>
               <option value="">All cities</option>
               {cityBuckets.map((bucket) => (
                 <option key={bucket.city} value={bucket.city}>{bucket.city}</option>
               ))}
             </select>
           </div>
+
+          <button
+            type="button"
+            className={
+              isAdmin
+                ? 'btn-secondary text-sm py-1.5 px-3 h-9 shrink-0 justify-self-end md:col-start-4 md:row-start-1 md:self-start md:mt-7'
+                : 'btn-secondary text-sm py-1.5 px-3 h-9 shrink-0 justify-self-end md:col-start-3 md:row-start-1 md:self-start md:mt-7'
+            }
+            onClick={resetChartFilters}
+          >
+            Reset chart filters
+          </button>
         </div>
 
         {/* Stat tiles */}

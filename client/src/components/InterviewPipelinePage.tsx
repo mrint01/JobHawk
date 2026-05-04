@@ -1,5 +1,15 @@
-import { useMemo, useState } from 'react'
-import { Search, CalendarRange, Clock3 } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import {
+  Search,
+  CalendarRange,
+  Clock3,
+  Video,
+  StickyNote,
+  Sparkles,
+  ExternalLink,
+  Pencil,
+  X,
+} from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Job, JobStatus, Platform } from '../types'
 import { formatGermanDateTime } from '../time'
@@ -29,11 +39,315 @@ function dateOf(job: Job): number {
   return Number.isNaN(t) ? 0 : t
 }
 
-function daysSinceApplied(appliedAt?: string): number | null {
-  if (!appliedAt) return null
-  const ts = new Date(appliedAt).getTime()
-  if (Number.isNaN(ts)) return null
-  return Math.max(0, Math.floor((Date.now() - ts) / 86_400_000))
+function toDatetimeLocalValue(iso?: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return ''
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function parseInterviewNotes(raw?: string): { meetUrl: string; details: string } {
+  if (!raw?.trim()) return { meetUrl: '', details: '' }
+  try {
+    const j = JSON.parse(raw) as { meetUrl?: unknown; details?: unknown }
+    if (j && typeof j === 'object') {
+      return { meetUrl: String(j.meetUrl ?? ''), details: String(j.details ?? '') }
+    }
+  } catch {
+    return { meetUrl: '', details: raw.trim() }
+  }
+  return { meetUrl: '', details: '' }
+}
+
+function serializeInterviewNotes(meetUrl: string, details: string): string | null {
+  const m = meetUrl.trim()
+  const d = details.trim()
+  if (!m && !d) return null
+  return JSON.stringify({ meetUrl: m, details: d })
+}
+
+function canonicalNotesPayload(raw?: string): string {
+  const p = parseInterviewNotes(raw)
+  return serializeInterviewNotes(p.meetUrl, p.details) ?? ''
+}
+
+/** Accepted / refused: no further interviews; reminders are not sent for these (server uses same rule). */
+function isTerminalPipelineStatus(status: JobStatus): boolean {
+  return status === 'accepted' || status === 'refused'
+}
+
+function interviewTimelineCopy(interviewAt: string | undefined, stageLabel: string): { when: string | null; line: string } {
+  if (!interviewAt) {
+    return {
+      when: null,
+      line: `No interview date yet — add one for your ${stageLabel}.`,
+    }
+  }
+  const t = new Date(interviewAt).getTime()
+  if (Number.isNaN(t)) return { when: null, line: 'Invalid interview date.' }
+  const when = formatGermanDateTime(interviewAt)
+  const ms = t - Date.now()
+  if (ms <= 0) {
+    return { when, line: `Your ${stageLabel} time has passed.` }
+  }
+  const hours = ms / 3_600_000
+  const days = Math.floor(ms / 86_400_000)
+  let remaining: string
+  if (hours < 24) {
+    if (hours <= 1) remaining = 'Less than 1 hour remaining'
+    else remaining = `${Math.ceil(hours)} hours remaining`
+  } else {
+    remaining = `${days} day${days === 1 ? '' : 's'} remaining`
+  }
+  return {
+    when,
+    line: `${remaining} until your ${stageLabel}.`,
+  }
+}
+
+function InterviewTimelineCell({ job }: { job: Job }) {
+  const { updateJobInterview } = useApp()
+  const stageLabel = STATUS_META[job.status].label
+  const [localDt, setLocalDt] = useState(() => toDatetimeLocalValue(job.interviewAt))
+  const [editingTime, setEditingTime] = useState(false)
+
+  useEffect(() => {
+    setLocalDt(toDatetimeLocalValue(job.interviewAt))
+  }, [job.interviewAt])
+
+  function commitFromValue(v: string) {
+    const trimmed = v.trim()
+    if (!trimmed) {
+      updateJobInterview(job.id, { interviewAt: null })
+      return
+    }
+    const d = new Date(trimmed)
+    if (Number.isNaN(d.getTime())) return
+    updateJobInterview(job.id, { interviewAt: d.toISOString() })
+  }
+
+  function applyAndClose() {
+    commitFromValue(localDt)
+    setEditingTime(false)
+  }
+
+  if (isTerminalPipelineStatus(job.status)) {
+    const hint = job.status === 'accepted' ? 'Offer accepted.' : 'Declined.'
+    return (
+      <div className="min-w-[180px] max-w-[340px]">
+        <p className="text-xs text-gray-500 dark:text-slate-500 leading-relaxed">{hint}</p>
+      </div>
+    )
+  }
+
+  const { when, line } = interviewTimelineCopy(job.interviewAt, stageLabel)
+
+  return (
+    <div className="space-y-2 min-w-[180px] max-w-[340px]">
+      <div className="flex items-start gap-2">
+        <Clock3 className="w-4 h-4 text-violet-500 dark:text-violet-400 flex-shrink-0 mt-0.5" />
+        <div className="min-w-0 flex-1 space-y-1">
+          {when && (
+            <p className="text-sm font-medium text-gray-900 dark:text-white tabular-nums">{when}</p>
+          )}
+          <div className="flex flex-wrap items-end gap-2">
+            <p className={`text-xs leading-relaxed flex-1 min-w-[140px] ${when ? 'text-gray-600 dark:text-slate-400' : 'text-gray-500 dark:text-slate-500'}`}>
+              {line}
+            </p>
+            <button
+              type="button"
+              onClick={() => setEditingTime((v) => !v)}
+              className="inline-flex items-center justify-center h-8 w-8 rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-600 dark:text-slate-300 hover:border-violet-400 hover:text-violet-600 dark:hover:border-violet-500 dark:hover:text-violet-400 transition-colors shrink-0"
+              title={editingTime ? 'Hide editor' : 'Update interview date & time'}
+              aria-expanded={editingTime}
+            >
+              <Pencil className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        </div>
+      </div>
+      {editingTime && (
+        <div className="rounded-lg border border-gray-200 dark:border-slate-600 bg-gray-50/80 dark:bg-slate-900/50 p-2 space-y-2">
+          <input
+            type="datetime-local"
+            className="input text-xs h-8 py-1 w-full min-w-0"
+            value={localDt}
+            onChange={(e) => setLocalDt(e.target.value)}
+          />
+          <div className="flex flex-wrap gap-2">
+            <button type="button" className="btn-primary text-xs h-8 px-3" onClick={applyAndClose}>
+              Apply
+            </button>
+            <button
+              type="button"
+              className="btn-secondary text-xs h-8 px-3"
+              onClick={() => {
+                setLocalDt('')
+                updateJobInterview(job.id, { interviewAt: null })
+              }}
+            >
+              Clear date
+            </button>
+            <button
+              type="button"
+              className="btn-ghost text-xs h-8 px-2"
+              onClick={() => {
+                setLocalDt(toDatetimeLocalValue(job.interviewAt))
+                setEditingTime(false)
+              }}
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function InterviewBriefPanel({ job }: { job: Job }) {
+  const { updateJobInterview, addToast } = useApp()
+  const [open, setOpen] = useState(false)
+  const [meetUrl, setMeetUrl] = useState('')
+  const [details, setDetails] = useState('')
+
+  const hasBriefingContent = Boolean(canonicalNotesPayload(job.interviewNotes))
+
+  function openModal() {
+    const p = parseInterviewNotes(job.interviewNotes)
+    setMeetUrl(p.meetUrl)
+    setDetails(p.details)
+    setOpen(true)
+  }
+
+  const dirty =
+    canonicalNotesPayload(job.interviewNotes) !== (serializeInterviewNotes(meetUrl, details) ?? '')
+
+  function save() {
+    const payload = serializeInterviewNotes(meetUrl, details)
+    updateJobInterview(job.id, { interviewNotes: payload })
+    addToast('Briefing saved', 'success')
+    setOpen(false)
+  }
+
+  function closeModal() {
+    setOpen(false)
+  }
+
+  const meet = meetUrl.trim()
+  const meetHref = meet.match(/^https?:\/\//i) ? meet : meet ? `https://${meet}` : ''
+
+  return (
+    <>
+      <div className="flex justify-center py-1">
+        <button
+          type="button"
+          onClick={openModal}
+          className="relative inline-flex items-center justify-center h-9 w-9 rounded-xl border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-violet-600 dark:text-violet-400 shadow-sm hover:border-violet-400 hover:bg-violet-50 dark:hover:bg-violet-500/10 transition-colors"
+          title="Interview briefing — meet link & notes"
+          aria-label="Open interview briefing"
+        >
+          <StickyNote className="w-4 h-4" />
+          {hasBriefingContent ? (
+            <span className="absolute top-1 right-1 h-2 w-2 rounded-full bg-emerald-500 ring-2 ring-white dark:ring-slate-800" aria-hidden />
+          ) : null}
+        </button>
+      </div>
+
+      {open && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-[2px]"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={`briefing-title-${job.id}`}
+          onClick={(e) => e.target === e.currentTarget && closeModal()}
+          onKeyDown={(e) => e.key === 'Escape' && closeModal()}
+        >
+          <div
+            className="relative w-full max-w-md rounded-2xl border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-violet-500 via-blue-500 to-indigo-500" />
+            <button
+              type="button"
+              onClick={closeModal}
+              className="absolute right-3 top-3 p-1.5 rounded-lg text-gray-400 hover:text-gray-800 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-slate-800 z-10"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
+
+            <div className="p-6 pt-8 space-y-4 max-h-[85vh] overflow-y-auto">
+              <div className="flex items-start gap-3 pr-8">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-violet-500/15 to-indigo-500/15 border border-violet-500/25">
+                  <Sparkles className="w-5 h-5 text-violet-600 dark:text-violet-400" />
+                </span>
+                <div className="min-w-0">
+                  <h2 id={`briefing-title-${job.id}`} className="text-base font-semibold text-gray-900 dark:text-white">
+                    Interview briefing
+                  </h2>
+                  <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">{job.title}</p>
+                </div>
+              </div>
+
+              <label className="block">
+                <span className="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
+                  <Video className="w-3.5 h-3.5" /> Meet link
+                </span>
+                <input
+                  type="text"
+                  className="input text-sm font-mono placeholder:text-gray-400"
+                  placeholder="https://meet.google.com/…"
+                  value={meetUrl}
+                  onChange={(e) => setMeetUrl(e.target.value)}
+                />
+              </label>
+
+              {meetHref ? (
+                <a
+                  href={meetHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" /> Open meeting
+                </a>
+              ) : null}
+
+              <label className="block">
+                <span className="flex items-center gap-1 text-xs font-medium text-gray-600 dark:text-slate-400 mb-1.5">
+                  <StickyNote className="w-3.5 h-3.5" /> Notes
+                </span>
+                <textarea
+                  className="input text-sm min-h-[100px] py-2 resize-y placeholder:text-gray-400 dark:placeholder:text-slate-500"
+                  placeholder="Agenda, interviewer names, prep checklist…"
+                  value={details}
+                  onChange={(e) => setDetails(e.target.value)}
+                  rows={4}
+                />
+              </label>
+
+              <div className="flex flex-wrap justify-end gap-2 pt-1">
+                <button type="button" className="btn-secondary text-sm" onClick={closeModal}>
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  disabled={!dirty}
+                  onClick={() => save()}
+                  className="btn-primary text-sm disabled:opacity-40 disabled:cursor-not-allowed"
+                  title={!dirty ? 'No changes to save' : undefined}
+                >
+                  Save briefing
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  )
 }
 
 export default function InterviewPipelinePage() {
@@ -175,85 +489,68 @@ export default function InterviewPipelinePage() {
 
       <div className="card overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full text-sm table-fixed">
-            <colgroup>
-              <col />
-              <col className="w-[120px]" />
-              <col className="w-[220px]" />
-              <col className="w-[190px]" />
-              <col className="w-[340px]" />
-            </colgroup>
+          <table className="w-full min-w-[1040px] text-sm">
             <thead className="bg-gray-50 dark:bg-slate-800/70 border-b border-gray-200 dark:border-slate-700">
               <tr>
-                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300">Role</th>
-                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300">Platform</th>
-                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300">Applied Date</th>
-                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300">Follow-up Cue</th>
-                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300">Status</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300 align-bottom">Role</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300 align-bottom">Platform</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300 whitespace-nowrap align-bottom">Applied</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300 align-bottom">Interview timeline</th>
+                <th className="text-center px-2 py-3 font-semibold text-gray-600 dark:text-slate-300 align-bottom">Briefing</th>
+                <th className="text-left px-4 py-3 font-semibold text-gray-600 dark:text-slate-300 align-bottom">Status</th>
               </tr>
             </thead>
             <tbody>
               {isJobsLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-6 text-center text-gray-400 dark:text-slate-500">Loading tracking data...</td>
+                  <td colSpan={6} className="px-4 py-6 text-center text-gray-400 dark:text-slate-500">Loading tracking data...</td>
                 </tr>
               ) : filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-4 py-10 text-center text-gray-400 dark:text-slate-500">
-                    No tracked jobs yet. Move a job from Applied using "Move to HR Interview".
+                  <td colSpan={6} className="px-4 py-10 text-center text-gray-400 dark:text-slate-500">
+                    No tracked jobs yet. Move a job from Applied using &quot;Move to HR Interview&quot;.
                   </td>
                 </tr>
               ) : (
-                filtered.map((job) => {
-                  const days = daysSinceApplied(job.appliedAt)
-                  return (
-                    <tr key={job.id} className="border-b border-gray-100 dark:border-slate-800 last:border-0">
-                      <td className="px-4 py-3 align-top">
-                        <a
-                          href={job.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="font-medium text-gray-900 dark:text-white hover:underline"
+                filtered.map((job) => (
+                  <tr key={job.id} className="border-b border-gray-100 dark:border-slate-800 last:border-0 align-top">
+                    <td className="px-4 py-3 align-top min-w-[320px] md:min-w-[400px] lg:min-w-[440px] max-w-xl lg:max-w-2xl">
+                      <a
+                        href={job.url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-medium text-gray-900 dark:text-white hover:underline block leading-snug break-words"
+                      >
+                        {job.title}
+                      </a>
+                      <p className="text-xs text-gray-500 dark:text-slate-400 mt-1.5 break-words">{job.company} — {job.location || 'Unknown'}</p>
+                    </td>
+                    <td className="px-4 py-3 capitalize text-gray-600 dark:text-slate-300">{job.platform}</td>
+                    <td className="px-4 py-3 text-gray-600 dark:text-slate-300 whitespace-nowrap">
+                      {job.appliedAt ? (formatGermanDateTime(job.appliedAt) ?? 'Unknown') : 'Unknown'}
+                    </td>
+                    <td className="px-4 py-3">
+                      <InterviewTimelineCell job={job} />
+                    </td>
+                    <td className="px-2 py-3 align-top text-center w-[72px]">
+                      <InterviewBriefPanel job={job} />
+                    </td>
+                    <td className="px-4 py-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className={`badge border border-transparent min-w-[140px] justify-center text-center ${STATUS_META[job.status].tone}`}>
+                          {STATUS_META[job.status].label}
+                        </span>
+                        <select
+                          className="input text-xs h-8 py-1 px-2 flex-1 min-w-[160px] max-w-[200px]"
+                          value={job.status}
+                          onChange={(e) => updateJobStatus(job.id, e.target.value as JobStatus)}
                         >
-                          {job.title}
-                        </a>
-                        <p className="text-xs text-gray-500 dark:text-slate-400 mt-1">{job.company} - {job.location || 'Unknown'}</p>
-                      </td>
-                      <td className="px-4 py-3 align-top">
-                        <span className="capitalize text-gray-600 dark:text-slate-300">{job.platform}</span>
-                      </td>
-                      <td className="px-4 py-3 align-top text-gray-600 dark:text-slate-300">
-                        <span className="inline-block whitespace-nowrap">
-                          {job.appliedAt ? (formatGermanDateTime(job.appliedAt) ?? 'Unknown') : 'Unknown'}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 align-top">
-                        <span className="inline-flex items-center gap-1 text-xs text-gray-500 dark:text-slate-400">
-                          <Clock3 className="w-3.5 h-3.5" />
-                          {days === null
-                            ? 'No date'
-                            : days >= 10
-                              ? 'Follow-up recommended'
-                              : `${days} day${days === 1 ? '' : 's'} since applying`}
-                        </span>
-                      </td>
-                      <td className="px-4 py-3 align-top">
-                        <div className="flex items-center gap-2">
-                          <span className={`badge border border-transparent w-[150px] justify-center text-center ${STATUS_META[job.status].tone}`}>
-                            {STATUS_META[job.status].label}
-                          </span>
-                          <select
-                            className="input text-xs h-8 py-1 px-2 w-[170px]"
-                            value={job.status}
-                            onChange={(e) => updateJobStatus(job.id, e.target.value as JobStatus)}
-                          >
-                            {STATUS_OPTIONS.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
-                          </select>
-                        </div>
-                      </td>
-                    </tr>
-                  )
-                })
+                          {STATUS_OPTIONS.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                        </select>
+                      </div>
+                    </td>
+                  </tr>
+                ))
               )}
             </tbody>
           </table>

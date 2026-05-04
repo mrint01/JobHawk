@@ -24,6 +24,9 @@ export interface Job {
   scrapedAt: string
   status: JobStatus
   appliedAt?: string
+  interviewAt?: string
+  interviewNotes?: string
+  interviewReminderSentAt?: string
 }
 
 export interface ScrapedJob {

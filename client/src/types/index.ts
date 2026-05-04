@@ -34,6 +34,9 @@ export interface Job {
   scrapedAt: string // ISO string
   status: JobStatus
   appliedAt?: string // ISO string
+  interviewAt?: string
+  interviewNotes?: string
+  interviewReminderSentAt?: string
 }
 
 export interface ScrapeParams {

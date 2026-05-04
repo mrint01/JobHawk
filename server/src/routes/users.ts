@@ -4,6 +4,8 @@ import {
   changeUserPassword,
   createUser,
   readUsers,
+  readUserProfile,
+  setUserEmailInterviewReminders,
   isAdmin,
   deleteUser,
   setUserStatus,
@@ -28,6 +30,41 @@ router.post('/login', async (req: Request, res: Response) => {
     ok: true,
     user: { id: user.id, username: user.username, email: user.email, role: user.role },
   })
+})
+
+router.get('/me', async (req: Request, res: Response) => {
+  const raw = String(req.header('x-user-id') || '').trim()
+  if (!raw) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+  const userId = resolveUserId(raw)
+  const profile = await readUserProfile(userId)
+  if (!profile) {
+    res.status(404).json({ error: 'User not found' })
+    return
+  }
+  res.json(profile)
+})
+
+router.patch('/me/preferences', async (req: Request, res: Response) => {
+  const raw = String(req.header('x-user-id') || '').trim()
+  if (!raw) {
+    res.status(401).json({ error: 'Unauthorized' })
+    return
+  }
+  const userId = resolveUserId(raw)
+  const enabled = req.body?.emailInterviewReminders
+  if (typeof enabled !== 'boolean') {
+    res.status(400).json({ error: 'emailInterviewReminders boolean required' })
+    return
+  }
+  const ok = await setUserEmailInterviewReminders(userId, enabled)
+  if (!ok) {
+    res.status(500).json({ error: 'Failed to save preference' })
+    return
+  }
+  res.json({ ok: true, emailInterviewReminders: enabled })
 })
 
 router.post('/signup', async (req: Request, res: Response) => {

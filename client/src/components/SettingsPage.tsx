@@ -82,7 +82,7 @@ function NotificationsSection() {
   return (
     <Section
       title="Notifications"
-      description="Receive one email reminder per scheduled interview (sent roughly 24 hours before). Your admin must configure outbound SMTP on the API server."
+      description="Email reminders for upcoming interviews."
     >
       <label className="flex items-start gap-4 cursor-pointer rounded-xl border border-gray-200 dark:border-slate-700 bg-gray-50/80 dark:bg-slate-800/40 p-4 hover:border-blue-300 dark:hover:border-blue-500/30 transition-colors max-w-lg">
         <span className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 border border-blue-500/20">
@@ -93,7 +93,7 @@ function NotificationsSection() {
             <div>
               <p className="text-sm font-semibold text-gray-900 dark:text-white">Interview email reminders</p>
               <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-                Uses your account email ({appState.email || '—'}). Turn off anytime.
+                ~24h before each interview · your JobHawk inbox · disable anytime.
               </p>
             </div>
             <input
@@ -830,8 +830,8 @@ export default function SettingsPage() {
       </div>
 
       <ServerBanner />
-      <NotificationsSection />
       <AppearanceSection />
+      <NotificationsSection />
       <SecuritySection />
       <PlatformSection />
     </div>

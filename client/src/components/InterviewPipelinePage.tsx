@@ -236,7 +236,6 @@ function InterviewBriefPanel({ job }: { job: Job }) {
   }
 
   const meet = meetUrl.trim()
-  const meetHref = meet.match(/^https?:\/\//i) ? meet : meet ? `https://${meet}` : ''
 
   return (
     <>
@@ -304,9 +303,9 @@ function InterviewBriefPanel({ job }: { job: Job }) {
                 />
               </label>
 
-              {meetHref ? (
+              {meet ? (
                 <a
-                  href={meetHref}
+                  href={meet}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400 hover:underline"

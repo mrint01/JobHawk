@@ -1,11 +1,14 @@
 /**
- * Indeed scraper (default: de.indeed.com) — public listings via Playwright Firefox.
+ * Indeed scraper (default: de.indeed.com) — public listings via Playwright Chromium.
  *
  * Opt-in in Settings → Indeed → Connect stores a marker session only (no login).
  * Scrolls the results list inside the page shell (inner scrollbar), matching LinkedIn-style UX.
  * Returns at most SCRAPE_JOBS_PER_PLATFORM_LIMIT (10) jobs, newest-first by postedDate.
  */
-import { firefox, type Browser, type BrowserContext, type LaunchOptions, type Page } from 'playwright'
+import { chromium, type BrowserContext, type LaunchOptions, type Page } from 'playwright'
+import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
 import { jitter, sleep } from '../utils/browser'
 import { nanoid } from '../utils/nanoid'
 import { subMinutes, subHours, subDays, subWeeks, parseISO, isValid } from 'date-fns'
@@ -36,6 +39,16 @@ function indeedLaunchProxy(): LaunchOptions['proxy'] {
 function indeedNavTimeoutMs(): number {
   const n = Number(process.env.INDEED_NAV_TIMEOUT_MS ?? '90000')
   return Number.isFinite(n) && n >= 15_000 ? Math.floor(n) : 90_000
+}
+
+function indeedExtensionPath(): string | null {
+  const raw = process.env.INDEED_CHROME_EXTENSION_PATH?.trim() ?? process.env.CHROME_EXTENSION_PATH?.trim() ?? ''
+  if (!raw) return null
+  if (!existsSync(raw)) {
+    console.warn(`[indeed] chrome extension path not found: ${raw}`)
+    return null
+  }
+  return raw
 }
 
 /**
@@ -429,15 +442,27 @@ export async function scrapeIndeed(
 
   onProgress({ type: 'progress', platform: 'indeed', progress: 5 })
 
-  let browser: Browser | null = null
   let context: BrowserContext | null = null
   let page: Page | null = null
+  let userDataDir: string | null = null
   try {
-    browser = await firefox.launch({
-      headless: process.env.PUPPETEER_HEADLESS !== 'false',
+    const extensionPath = indeedExtensionPath()
+    const chromeArgs = [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-blink-features=AutomationControlled',
+      '--window-size=1366,768',
+      ...(extensionPath ? [`--disable-extensions-except=${extensionPath}`, `--load-extension=${extensionPath}`] : []),
+    ]
+    const useHeadless = extensionPath ? false : process.env.PUPPETEER_HEADLESS !== 'false'
+
+    userDataDir = mkdtempSync(join(tmpdir(), 'indeed-chrome-profile-'))
+    context = await chromium.launchPersistentContext(userDataDir, {
+      channel: 'chrome',
+      headless: useHeadless,
       proxy: indeedLaunchProxy(),
-    })
-    context = await browser.newContext({
+      args: chromeArgs,
       viewport: { width: 1366, height: 768 },
       locale: 'de-DE',
       timezoneId: 'Europe/Berlin',
@@ -525,6 +550,6 @@ export async function scrapeIndeed(
   } finally {
     if (page) await page.close().catch(() => undefined)
     if (context) await context.close().catch(() => undefined)
-    if (browser) await browser.close().catch(() => undefined)
+    if (userDataDir) rmSync(userDataDir, { recursive: true, force: true })
   }
 }

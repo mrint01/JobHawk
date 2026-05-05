@@ -6,8 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "postinstall": "npx playwright install firefox",
-    "playwright:install": "npx playwright install --with-deps firefox"
+    "postinstall": "npx playwright install chromium firefox",
+    "playwright:install": "npx playwright install --with-deps chromium firefox"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.78.0",

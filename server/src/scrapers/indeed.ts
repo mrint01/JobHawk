@@ -51,6 +51,26 @@ function indeedExtensionPath(): string | null {
   return raw
 }
 
+function isMissingChromeChannelError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.includes("Chromium distribution 'chrome' is not found")
+}
+
+async function launchIndeedContext(
+  userDataDir: string,
+  options: Parameters<typeof chromium.launchPersistentContext>[1],
+): Promise<BrowserContext> {
+  try {
+    return await chromium.launchPersistentContext(userDataDir, options)
+  } catch (err) {
+    if (!isMissingChromeChannelError(err)) throw err
+    console.warn('[indeed] system Chrome not found; falling back to Playwright bundled Chromium')
+    const fallback = { ...options }
+    delete (fallback as { channel?: string }).channel
+    return chromium.launchPersistentContext(userDataDir, fallback)
+  }
+}
+
 /**
  * Prod/slow networks often miss domcontentloaded before Playwright's default deadline.
  * Try domcontentloaded first; on timeout use commit + waitForLoadState (still proceed if partial DOM).
@@ -458,7 +478,7 @@ export async function scrapeIndeed(
     const useHeadless = extensionPath ? false : process.env.PUPPETEER_HEADLESS !== 'false'
 
     userDataDir = mkdtempSync(join(tmpdir(), 'indeed-chrome-profile-'))
-    context = await chromium.launchPersistentContext(userDataDir, {
+    context = await launchIndeedContext(userDataDir, {
       channel: 'chrome',
       headless: useHeadless,
       proxy: indeedLaunchProxy(),

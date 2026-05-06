@@ -393,6 +393,43 @@ export async function wakeAndCheckLinkedInAgent(userId: string): Promise<LinkedI
   }
 }
 
+// ── Indeed Agent ──────────────────────────────────────────────────────────────
+
+export interface IndeedAgentStatus {
+  connected: boolean
+}
+
+export async function fetchIndeedAgentStatus(): Promise<IndeedAgentStatus> {
+  try {
+    const res = await fetch(`${BASE}/api/indeed/agent-status`, { signal: AbortSignal.timeout(4_000) })
+    if (!res.ok) return { connected: false }
+    return await res.json() as IndeedAgentStatus
+  } catch {
+    return { connected: false }
+  }
+}
+
+export async function wakeAndCheckIndeedAgent(): Promise<IndeedAgentStatus> {
+  try {
+    const res = await fetch(`${BASE}/api/indeed/agent/wake-check`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(30_000),
+    })
+    if (!res.ok) return { connected: false }
+    return await res.json() as IndeedAgentStatus
+  } catch {
+    return { connected: false }
+  }
+}
+
+// ── Agent script download ─────────────────────────────────────────────────────
+
+/** Canonical download URL for the unified jobhawk_agent.py script. */
+export function getAgentDownloadUrl(): string {
+  return `${BASE}/api/agent/download`
+}
+
+/** @deprecated use getAgentDownloadUrl() */
 export function getLinkedInAgentDownloadUrl(): string {
-  return `${BASE}/api/linkedin/agent/download`
+  return getAgentDownloadUrl()
 }

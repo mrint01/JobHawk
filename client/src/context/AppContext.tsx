@@ -20,10 +20,13 @@ import {
   changePasswordApi,
   fetchLinkedInAgentStatus,
   wakeAndCheckLinkedInAgent,
+  fetchIndeedAgentStatus,
+  wakeAndCheckIndeedAgent,
   type PlatformId,
   type ConnectPayload,
   type ConnectResult,
   type LinkedInAgentStatus,
+  type IndeedAgentStatus,
 } from '../services/api'
 
 export type ActivePage = 'dashboard' | 'pipeline' | 'settings' | 'analytics' | 'admin'
@@ -51,6 +54,11 @@ interface AppContextValue {
   linkedinAgent: LinkedInAgentStatus
   refreshLinkedInAgent: (forceSessionCheck?: boolean) => Promise<LinkedInAgentStatus>
   setLinkedInEnabled: (enabled: boolean) => void
+  indeedAgent: IndeedAgentStatus
+  refreshIndeedAgent: (forceCheck?: boolean) => Promise<IndeedAgentStatus>
+  setIndeedEnabled: (enabled: boolean) => void
+  indeedBrowser: string
+  setIndeedBrowser: (b: string) => void
   jobs: Job[]
   newJobs: Job[]
   appliedJobs: Job[]
@@ -85,6 +93,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [authMode, setAuthMode] = useState<'manual' | 'headless'>('manual')
   const [platformConnecting, setPlatformConnecting] = useState<Platform | null>(null)
   const [linkedinAgent, setLinkedinAgent] = useState<LinkedInAgentStatus>({ connected: false, hasSession: false, username: '' })
+  const [indeedAgent, setIndeedAgent] = useState<IndeedAgentStatus>({ connected: false })
+  const [indeedBrowser, setIndeedBrowser] = useState<string>(() => localStorage.getItem('indeedBrowser') ?? 'chrome')
   const jobsLoadedRef = useRef(false)
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), [])
@@ -111,15 +121,22 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           ...s,
           stepstonConnected: result.connectedPlatforms.includes('stepstone'),
           xingConnected: result.connectedPlatforms.includes('xing'),
-          indeedConnected: result.connectedPlatforms.includes('indeed'),
+          // indeedConnected is now driven by the local agent, not server sessions
           jobriverConnected: result.connectedPlatforms.includes('jobriver'),
         }))
         if (appState.userId) {
-          const agentStatus = await fetchLinkedInAgentStatus(appState.userId)
+          const [agentStatus, indeedStatus] = await Promise.all([
+            fetchLinkedInAgentStatus(appState.userId),
+            fetchIndeedAgentStatus(),
+          ])
           if (!cancelled) {
             setLinkedinAgent(agentStatus)
             if (!(agentStatus.connected && agentStatus.hasSession)) {
               setAppState((s) => ({ ...s, linkedinConnected: false }))
+            }
+            setIndeedAgent(indeedStatus)
+            if (!indeedStatus.connected) {
+              setAppState((s) => ({ ...s, indeedConnected: false }))
             }
           }
         }
@@ -169,6 +186,26 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setLinkedInEnabled = useCallback((enabled: boolean) => {
     setAppState((s) => ({ ...s, linkedinConnected: enabled }))
+  }, [])
+
+  const refreshIndeedAgent = useCallback(async (forceCheck = false): Promise<IndeedAgentStatus> => {
+    const status = forceCheck
+      ? await wakeAndCheckIndeedAgent()
+      : await fetchIndeedAgentStatus()
+    setIndeedAgent(status)
+    if (!status.connected) {
+      setAppState((s) => ({ ...s, indeedConnected: false }))
+    }
+    return status
+  }, [])
+
+  const setIndeedEnabled = useCallback((enabled: boolean) => {
+    setAppState((s) => ({ ...s, indeedConnected: enabled }))
+  }, [])
+
+  const handleSetIndeedBrowser = useCallback((b: string) => {
+    setIndeedBrowser(b)
+    localStorage.setItem('indeedBrowser', b)
   }, [])
 
   const login = useCallback(async (usernameOrEmail: string, password: string) => {
@@ -329,7 +366,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setScrapeProgress({ isRunning: true, overall: 0, estimatedSecondsLeft: 15, platforms: [], startedAt: Date.now() })
     const shownPlatformErrors = new Set<string>()
     try {
-      await scrapeAll(params, connectedPlatforms, appState.userId, (p) => {
+      await scrapeAll({ ...params, indeedBrowser }, connectedPlatforms, appState.userId, (p) => {
         setScrapeProgress(p)
         for (const platformProgress of p.platforms) {
           if (platformProgress.status !== 'error' || !platformProgress.error) continue
@@ -355,6 +392,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       activePage, setActivePage, sidebarOpen, setSidebarOpen, toggleSidebar,
       connectPlatform, disconnectPlatform, connectedPlatforms, platformConnecting,
       linkedinAgent, refreshLinkedInAgent, setLinkedInEnabled,
+      indeedAgent, refreshIndeedAgent, setIndeedEnabled,
+      indeedBrowser, setIndeedBrowser: handleSetIndeedBrowser,
       jobs, newJobs, appliedJobs, pipelineJobs, isJobsLoading, markApplied, markUnapplied, updateJobStatus, updateJobInterview, deleteJob, clearJobs, clearJobOffers,
       scrapeProgress, isScraping, startScrape, toasts, addToast, removeToast,
     }}>

@@ -6,7 +6,7 @@ import {
 } from 'lucide-react'
 import type { Platform } from '../types'
 import { useApp } from '../context/AppContext'
-import { fetchUserProfileApi, getLinkedInAgentDownloadUrl, patchUserPreferencesApi } from '../services/api'
+import { fetchUserProfileApi, getAgentDownloadUrl, patchUserPreferencesApi } from '../services/api'
 
 // ── Server offline banner ─────────────────────────────────────────────────────
 function ServerBanner() {
@@ -282,18 +282,32 @@ const PLATFORM_META: Record<
   },
 }
 
-// ── Indeed (opt-in toggle only — no credentials) ─────────────────────────────
-function IndeedCard() {
-  const {
-    appState,
-    connectPlatform,
-    disconnectPlatform,
-    platformConnecting,
-    serverOnline,
-  } = useApp()
-  const meta = PLATFORM_META.indeed
-  const connected = appState.indeedConnected
-  const isConnecting = platformConnecting === 'indeed'
+// ── Indeed Agent Card ─────────────────────────────────────────────────────────
+function IndeedAgentCard() {
+  const { indeedAgent, refreshIndeedAgent, serverOnline, appState, setIndeedEnabled, indeedBrowser, setIndeedBrowser } = useApp()
+  const [checking, setChecking] = useState(false)
+  const [offline, setOffline] = useState(false)
+  const connected = indeedAgent.connected
+  const selected = appState.indeedConnected
+
+  async function handleConnectCheck() {
+    setChecking(true)
+    try {
+      const status = await refreshIndeedAgent(true)
+      if (status.connected) {
+        setOffline(false)
+        setIndeedEnabled(true)
+      } else {
+        setOffline(true)
+      }
+    } finally {
+      setChecking(false)
+    }
+  }
+
+  function handleDisconnect() {
+    setIndeedEnabled(false)
+  }
 
   return (
     <div className={`p-4 rounded-xl border-2 transition-all duration-150
@@ -305,63 +319,132 @@ function IndeedCard() {
       <div className="flex items-center gap-4">
         <div
           className="w-11 h-11 rounded-xl flex items-center justify-center text-white font-bold text-xs flex-shrink-0 shadow-sm"
-          style={{ backgroundColor: meta.color }}
+          style={{ backgroundColor: '#2164f3' }}
         >
-          {meta.icon}
+          Id
         </div>
 
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-gray-900 dark:text-white">{meta.label}</p>
-          <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5 line-clamp-2">{meta.description}</p>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">Indeed</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
+            Runs via a local agent on your machine
+          </p>
         </div>
 
         <div className="flex items-center gap-2 flex-shrink-0">
           {connected ? (
             <>
-              <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                Connected
+              <span className="flex items-center gap-1.5 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+                <MonitorCheck className="w-3.5 h-3.5" />
+                Agent live
               </span>
-              <button
-                type="button"
-                onClick={() => disconnectPlatform('indeed')}
-                className="btn-secondary text-xs px-3 py-1.5 hover:!text-red-500 dark:hover:!text-red-400 hover:!border-red-300 dark:hover:!border-red-500/30"
-              >
-                <Unlink className="w-3.5 h-3.5" />
-                Disconnect
-              </button>
+              {selected ? (
+                <button
+                  type="button"
+                  onClick={handleDisconnect}
+                  className="btn-secondary text-xs px-3 py-1.5 hover:!text-red-500 dark:hover:!text-red-400 hover:!border-red-300 dark:hover:!border-red-500/30"
+                >
+                  <Unlink className="w-3.5 h-3.5" />
+                  Disconnect
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => setIndeedEnabled(true)}
+                  className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm"
+                  style={{ backgroundColor: '#2164f3' }}
+                >
+                  <Wifi className="w-3.5 h-3.5" />
+                  Connect
+                </button>
+              )}
             </>
-          ) : isConnecting ? (
-            <span className="flex items-center gap-1.5 text-xs font-medium text-blue-600 dark:text-blue-400">
+          ) : checking ? (
+            <span className="flex items-center gap-1.5 text-xs font-medium text-amber-600 dark:text-amber-400">
               <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Connecting…
+              Checking…
             </span>
           ) : (
-            <>
-              <span className="hidden sm:flex items-center gap-1.5 text-xs font-medium text-gray-400 dark:text-slate-500">
-                <span className="w-1.5 h-1.5 rounded-full bg-gray-300 dark:bg-slate-600" />
-                Not connected
-              </span>
-              <button
-                type="button"
-                onClick={() => connectPlatform('indeed')}
-                disabled={!serverOnline}
-                title={!serverOnline ? 'Start the backend server first' : undefined}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ backgroundColor: meta.color }}
-              >
-                <Wifi className="w-3.5 h-3.5" />
-                Connect
-              </button>
-            </>
+            <button
+              type="button"
+              onClick={handleConnectCheck}
+              disabled={!serverOnline || checking}
+              title={!serverOnline ? 'Start the backend server first' : undefined}
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white active:scale-95 transition-all duration-150 shadow-sm disabled:opacity-40 disabled:cursor-not-allowed"
+              style={{ backgroundColor: '#2164f3' }}
+            >
+              {checking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+              Connect
+            </button>
           )}
         </div>
       </div>
-      {!connected && !isConnecting && (
-        <p className="mt-3 text-xs text-gray-500 dark:text-slate-400">
-          Connect enables Indeed Germany (de.indeed.com) in your scrapes — no password or browser window.
-        </p>
-      )}
+
+      {connected ? (
+        <div className="mt-3 space-y-2">
+          <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 rounded-lg px-3 py-2">
+            <MonitorCheck className="w-3.5 h-3.5 flex-shrink-0" />
+            {selected
+              ? 'Agent is running locally and Indeed is selected for scraping.'
+              : 'Agent is running locally. Click Connect to enable Indeed scraping.'}
+          </div>
+          <div className="flex items-center gap-2 px-1">
+            <label className="text-xs text-gray-500 dark:text-slate-400 whitespace-nowrap">Browser for scraping:</label>
+            <select
+              value={indeedBrowser}
+              onChange={(e) => setIndeedBrowser(e.target.value)}
+              className="text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="chrome">Chrome (real browser)</option>
+              <option value="chromium">Chromium (built-in)</option>
+              <option value="firefox">Firefox</option>
+              <option value="webkit">WebKit / Safari</option>
+            </select>
+          </div>
+        </div>
+      ) : offline ? (
+        <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gradient-to-br from-gray-50 to-white dark:from-slate-900/60 dark:to-slate-800/70 p-3.5">
+          <div className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
+            <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-wide">Agent Status</p>
+              <p className="text-xs mt-0.5 leading-relaxed">
+                Indeed agent script is not running. Start it locally, then click Connect again.
+              </p>
+            </div>
+          </div>
+
+          <div className="mt-3 space-y-2">
+            <p className="text-[11px] font-semibold text-gray-500 dark:text-slate-400 uppercase tracking-wide">Quick Setup</p>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-slate-200">
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white" style={{ backgroundColor: '#2164f3' }}>1</span>
+                <span>Download the JobHawk agent script.</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-slate-200">
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white" style={{ backgroundColor: '#2164f3' }}>2</span>
+                <span>Run <code className="bg-gray-200 dark:bg-slate-700 rounded px-1">python3 jobhawk_agent.py</code>.</span>
+              </div>
+              <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-slate-200">
+                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white" style={{ backgroundColor: '#2164f3' }}>3</span>
+                <span>No login needed — Indeed scrapes public listings automatically.</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="mt-3 flex items-center justify-end gap-2">
+            <a
+              href={getAgentDownloadUrl()}
+              download="jobhawk_agent.py"
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white shadow-sm transition-all duration-150 active:scale-95 flex-shrink-0"
+              style={{ backgroundColor: '#2164f3' }}
+            >
+              <Download className="w-3.5 h-3.5" />
+              Download Agent
+            </a>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -583,7 +666,7 @@ function LinkedInAgentCard() {
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-slate-200">
                 <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white" style={{ backgroundColor: '#0077B5' }}>2</span>
-                <span>Run <code className="bg-gray-200 dark:bg-slate-700 rounded px-1">python3 linkedin_agent.py</code>.</span>
+                <span>Run <code className="bg-gray-200 dark:bg-slate-700 rounded px-1">python3 jobhawk_agent.py</code>.</span>
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-slate-200">
                 <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white" style={{ backgroundColor: '#0077B5' }}>3</span>
@@ -594,8 +677,8 @@ function LinkedInAgentCard() {
 
           <div className="mt-3 flex items-center justify-end gap-2">
             <a
-              href={getLinkedInAgentDownloadUrl()}
-              download="linkedin_agent.py"
+              href={getAgentDownloadUrl()}
+              download="jobhawk_agent.py"
               className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg font-medium text-white shadow-sm transition-all duration-150 active:scale-95 flex-shrink-0"
               style={{ backgroundColor: '#0077B5' }}
             >
@@ -803,13 +886,13 @@ function PlatformSection() {
       title="Platform Connections"
       description={
         authMode === 'manual'
-          ? `Manual browser login for StepStone/Xing; LinkedIn uses the agent; Indeed and Jobriver are one-click. ${connectedPlatforms.length} enabled.`
-          : `Headless login for StepStone/Xing; Indeed and Jobriver stay one-click. ${connectedPlatforms.length} enabled.`
+          ? `LinkedIn and Indeed use the local agent; StepStone/Xing use manual browser login; Jobriver is one-click. ${connectedPlatforms.length} enabled.`
+          : `LinkedIn and Indeed use the local agent; StepStone/Xing use headless login; Jobriver is one-click. ${connectedPlatforms.length} enabled.`
       }
     >
       <div className="space-y-3">
         <LinkedInAgentCard />
-        <IndeedCard />
+        <IndeedAgentCard />
         <JobriverCard />
         <PlatformCard platform="stepstone" />
         <PlatformCard platform="xing" />

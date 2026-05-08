@@ -88,7 +88,7 @@ DEFAULT_BACKEND_URL = "https://jobhawk-server-production.up.railway.app"
 # DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-server-production.up.railway.app"
 # Set to False to see the browser window (useful for debugging captchas).
 LINKEDIN_HEADLESS = True
-INDEED_HEADLESS   = False
+INDEED_HEADLESS   = True
 HEARTBEAT_INTERVAL       = 25
 RECONNECT_DELAY          = 5
 MAX_RECONNECT_DELAY      = 60

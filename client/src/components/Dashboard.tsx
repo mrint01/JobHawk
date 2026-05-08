@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Briefcase, CheckSquare, ChevronLeft, ChevronRight, WifiOff, Trash2, ListX, Download } from 'lucide-react'
+import { Briefcase, CheckSquare, ChevronLeft, ChevronRight, WifiOff, Trash2, ListX, Download, Search, X } from 'lucide-react'
 import type { Platform } from '../types'
 import { useApp } from '../context/AppContext'
 import { formatGermanDateTime } from '../time'
@@ -145,6 +145,7 @@ export default function Dashboard() {
   const [appliedSortOrder, setAppliedSortOrder] = useState<SortOrder>('date_desc')
   const [appliedDateFrom, setAppliedDateFrom] = useState('')
   const [appliedDateTo, setAppliedDateTo] = useState('')
+  const [appliedSearch, setAppliedSearch] = useState('')
 
   const isAdmin = appState.role === 'admin'
 
@@ -182,9 +183,18 @@ export default function Dashboard() {
   }, [offersFilteredSorted])
 
   const appliedFilteredSorted = useMemo(() => {
+    const q = appliedSearch.trim().toLowerCase()
     let filtered = appliedJobs.filter((job) =>
       appliedPlatformFilter === 'all' ? true : job.platform === appliedPlatformFilter,
     )
+
+    if (q) {
+      filtered = filtered.filter((job) =>
+        job.title.toLowerCase().includes(q) ||
+        job.company.toLowerCase().includes(q) ||
+        (job.location ?? '').toLowerCase().includes(q),
+      )
+    }
 
     if (appliedDateFrom || appliedDateTo) {
       const fromTs = appliedDateFrom ? new Date(`${appliedDateFrom}T00:00:00`).getTime() : Number.NEGATIVE_INFINITY
@@ -197,7 +207,7 @@ export default function Dashboard() {
 
     const dir = appliedSortOrder === 'date_desc' ? -1 : 1
     return [...filtered].sort((a, b) => (getDateRef('applied', a) - getDateRef('applied', b)) * dir)
-  }, [appliedJobs, appliedPlatformFilter, appliedSortOrder, appliedDateFrom, appliedDateTo])
+  }, [appliedJobs, appliedPlatformFilter, appliedSortOrder, appliedDateFrom, appliedDateTo, appliedSearch])
 
   const list = activeTab === 'offers' ? offersFilteredSorted : appliedFilteredSorted
   const page = activeTab === 'offers' ? offersPage : appliedPage
@@ -310,7 +320,7 @@ export default function Dashboard() {
   }
 
   useEffect(() => { setOffersPage(1) }, [offersPlatformFilter, offersSortOrder])
-  useEffect(() => { setAppliedPage(1) }, [appliedPlatformFilter, appliedSortOrder, appliedDateFrom, appliedDateTo])
+  useEffect(() => { setAppliedPage(1) }, [appliedPlatformFilter, appliedSortOrder, appliedDateFrom, appliedDateTo, appliedSearch])
 
   return (
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8 space-y-6">
@@ -390,7 +400,33 @@ export default function Dashboard() {
         </div>
 
         {/* Filters */}
-        <div className="flex flex-wrap items-end gap-3 mb-4">
+        <div className="flex flex-col gap-3 mb-4">
+          {activeTab === 'applied' && (
+            <div className="w-full sm:max-w-[490px]">
+            <label className="block text-[11px] text-gray-500 dark:text-slate-400 mb-1">Search</label>
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
+              <input
+                type="text"
+                className="input text-sm h-10 py-2 pl-9 pr-8 w-full"
+                placeholder="Search by title, company, or location…"
+                value={appliedSearch}
+                onChange={(e) => setAppliedSearch(e.target.value)}
+              />
+              {appliedSearch && (
+                <button
+                  type="button"
+                  onClick={() => setAppliedSearch('')}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-slate-300"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-end gap-3">
           <div>
             <label className="block text-[11px] text-gray-500 dark:text-slate-400 mb-1">Platform</label>
             <select
@@ -455,6 +491,7 @@ export default function Dashboard() {
                     setAppliedSortOrder('date_desc')
                     setAppliedDateFrom('')
                     setAppliedDateTo('')
+                    setAppliedSearch('')
                   }}
                   className="btn-secondary h-9"
                   type="button"
@@ -523,6 +560,7 @@ export default function Dashboard() {
               )}
             </div>
           )}
+          </div>
         </div>
 
         {/* Page info */}

@@ -110,7 +110,7 @@ export async function mergeJobsForUser(userId: string, incoming: ScrapedJob[]): 
         platform: job.platform,
         url: key,
         posted_date: safeDate(job.postedDate),
-        description: job.description || null,
+        description: job.description || existingJob.description || null,
         salary: job.salary || null,
         job_type: job.jobType || null,
         scraped_at: new Date().toISOString(),
@@ -378,6 +378,35 @@ function normalizeCity(location: string | null | undefined): string {
     stuttgart: 'Stuttgart',
   }
   return aliases[folded] ?? head
+}
+
+export async function updateJobDescriptionByUrl(
+  userId: string,
+  url: string,
+  description: string,
+): Promise<void> {
+  const normalized = normalizeUrl(url)
+  const { error } = await supabase
+    .from('jobs')
+    .update({ description })
+    .eq('user_id', userId)
+    .eq('url', normalized)
+    .is('description', null)
+  if (error) console.error('[jobStore] updateJobDescriptionByUrl:', error.message)
+}
+
+export async function updateJobDescriptionById(
+  userId: string,
+  id: string,
+  description: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('jobs')
+    .update({ description })
+    .eq('id', id)
+    .eq('user_id', userId)
+    .is('description', null)
+  if (error) console.error('[jobStore] updateJobDescriptionById:', error.message)
 }
 
 function dbRowToJob(row: Record<string, unknown>): Job {

@@ -10,11 +10,13 @@ import {
   ArrowRightCircle,
   X,
   CalendarClock,
+  FileText,
 } from 'lucide-react'
 import type { Job } from '../types'
 import PlatformBadge from './PlatformBadge'
 import { useApp } from '../context/AppContext'
 import { formatGermanDate, formatPostedTime } from '../time'
+import JobDescriptionModal from './JobDescriptionModal'
 
 interface Props { job: Job }
 
@@ -40,6 +42,7 @@ export default function AppliedJobCard({ job }: Props) {
   const { markUnapplied, deleteJob, updateJobStatus, addToast } = useApp()
   const [hrModalOpen, setHrModalOpen] = useState(false)
   const [hrInterviewLocal, setHrInterviewLocal] = useState('')
+  const [descOpen, setDescOpen] = useState(false)
 
   const postedAgo = formatPostedTime(job.postedDate) || 'time unavailable'
 
@@ -83,7 +86,19 @@ export default function AppliedJobCard({ job }: Props) {
             <CalendarCheck className="w-3 h-3" />
             <span className="truncate">Applied {appliedDate}</span>
           </span>
-          <PlatformBadge platform={job.platform} />
+          <div className="flex items-center gap-1.5 flex-shrink-0">
+            {job.description && (
+              <button
+                type="button"
+                onClick={() => setDescOpen(true)}
+                title="View job description"
+                className="p-1 rounded-lg text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors"
+              >
+                <FileText className="w-4 h-4" />
+              </button>
+            )}
+            <PlatformBadge platform={job.platform} />
+          </div>
         </div>
         <span className="badge mb-3 bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 w-fit">
           Status: {STATUS_LABEL[job.status]}
@@ -146,6 +161,15 @@ export default function AppliedJobCard({ job }: Props) {
           </button>
         </div>
       </div>
+
+      {descOpen && job.description && (
+        <JobDescriptionModal
+          title={job.title}
+          company={job.company}
+          description={job.description}
+          onClose={() => setDescOpen(false)}
+        />
+      )}
 
       {hrModalOpen && (
         <div

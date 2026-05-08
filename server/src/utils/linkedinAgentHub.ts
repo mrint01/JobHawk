@@ -1,6 +1,7 @@
 import type { WebSocket } from 'ws'
 import { nanoid } from './nanoid'
 import type { ScrapedJob, ProgressCallback } from '../scrapers/types'
+import { updateJobDescriptionByUrl } from './jobStore'
 
 interface AgentConnection {
   ws: WebSocket
@@ -25,6 +26,7 @@ interface PendingSessionCheck {
 let agent: AgentConnection | null = null
 const pendingScrapes = new Map<string, PendingScrape>()
 let pendingSessionCheck: PendingSessionCheck | null = null
+const pendingEnrichments = new Map<string, string>() // requestId → userId
 
 export interface AgentStatus {
   connected: boolean
@@ -123,6 +125,21 @@ export function dispatchScrapeToAgent(
   })
 }
 
+export function sendDescribeJobs(
+  jobs: Array<{ url: string }>,
+  userId: string,
+): void {
+  if (!agent || jobs.length === 0) return
+  const requestId = nanoid()
+  pendingEnrichments.set(requestId, userId)
+  setTimeout(() => pendingEnrichments.delete(requestId), 90 * 60_000) // 90-min TTL
+  try {
+    agent.ws.send(JSON.stringify({ type: 'describe_jobs', requestId, jobs }))
+  } catch {
+    pendingEnrichments.delete(requestId)
+  }
+}
+
 export function handleAgentMessage(ws: WebSocket, raw: string) {
   if (!agent || agent.ws !== ws) return
   let data: Record<string, unknown>
@@ -170,6 +187,17 @@ export function handleAgentMessage(ws: WebSocket, raw: string) {
         pendingScrapes.delete(String(data.requestId))
         p.onProgress({ type: 'error', platform: 'linkedin', error: String(data.error ?? 'Unknown error') })
         p.resolve([])
+      }
+      break
+    }
+
+    case 'description_update': {
+      const requestId = String(data.requestId ?? '')
+      const url = String(data.url ?? '')
+      const description = String(data.description ?? '')
+      const userId = pendingEnrichments.get(requestId)
+      if (userId && url && description) {
+        updateJobDescriptionByUrl(userId, url, description).catch(console.error)
       }
       break
     }

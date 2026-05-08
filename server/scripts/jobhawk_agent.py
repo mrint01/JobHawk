@@ -457,6 +457,24 @@ _LI_STATE_JS = """
 })()
 """
 
+_LI_DESC_JS = """
+(() => {
+    const sels = [
+        '#job-details',
+        '.jobs-description__content',
+        '.jobs-description-content__text',
+        '.jobs-description'
+    ];
+    for (const s of sels) {
+        const el = document.querySelector(s);
+        if (el && el.innerText && el.innerText.trim().length > 50) return el.innerText.trim();
+    }
+    const main = document.querySelector('main') || document.querySelector('[role="main"]');
+    if (main && main.innerText && main.innerText.trim().length > 50) return main.innerText.trim().slice(0, 20000);
+    return '';
+})()
+"""
+
 _LI_EXTRACT_JS = """
 (() => {
     const results = [], seenIds = new Set();
@@ -1052,6 +1070,36 @@ class JobHawkAgent:
         finally:
             await page.close()
 
+    async def _handle_describe_jobs_linkedin(self, ws, request_id: str, jobs: List[Dict]):
+        """Phase 2: visit each LinkedIn job URL and send back its description."""
+        page = await self.linkedin_ctx.new_page()
+        try:
+            for job in jobs:
+                url = job.get("url", "")
+                if not url:
+                    continue
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=25_000)
+                    await asyncio.sleep(1.0 + random.uniform(0, 0.6))
+                    desc = await page.evaluate(_LI_DESC_JS)
+                    if desc and len(desc.strip()) > 50:
+                        try:
+                            await ws.send(json.dumps({
+                                "type": "description_update",
+                                "requestId": request_id,
+                                "url": url,
+                                "description": desc.strip(),
+                            }))
+                            log.info(f"[linkedin] desc sent: {len(desc)} chars")
+                        except Exception:
+                            return  # WS closed, stop
+                except Exception as e:
+                    log.warning(f"[linkedin] desc fetch failed for {url}: {e!s:.80}")
+                await asyncio.sleep(0.6 + random.uniform(0, 0.5))
+        finally:
+            await page.close()
+        log.info(f"[linkedin] Phase 2 enrichment done for {len(jobs)} jobs")
+
     async def _linkedin_ws_loop(self):
         log.info(f"[linkedin] connecting → {self.linkedin_ws_url}")
         async with websockets.connect(
@@ -1085,6 +1133,8 @@ class JobHawkAgent:
                         await ws.send(json.dumps({"type": "pong", "ts": msg.get("ts", 0)}))
                     elif t == "scrape_start":
                         asyncio.create_task(self._handle_linkedin_scrape(ws, msg.get("requestId", ""), msg.get("params", {})))
+                    elif t == "describe_jobs":
+                        asyncio.create_task(self._handle_describe_jobs_linkedin(ws, msg.get("requestId", ""), msg.get("jobs", [])))
                     elif t == "check_session":
                         ok = await self._linkedin_logged_in()
                         self.linkedin_has_session = ok

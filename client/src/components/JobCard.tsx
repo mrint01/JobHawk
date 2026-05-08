@@ -1,15 +1,17 @@
 import { useState } from 'react'
-import { MapPin, Building2, ExternalLink, CheckCheck, Clock, Trash2, Loader2 } from 'lucide-react'
+import { MapPin, Building2, ExternalLink, CheckCheck, Clock, Trash2, Loader2, FileText } from 'lucide-react'
 import type { Job } from '../types'
 import PlatformBadge from './PlatformBadge'
 import { useApp } from '../context/AppContext'
 import { formatPostedTime } from '../time'
+import JobDescriptionModal from './JobDescriptionModal'
 
 interface Props { job: Job }
 
 export default function JobCard({ job }: Props) {
   const { markApplied, deleteJob } = useApp()
   const [isDeleting, setIsDeleting] = useState(false)
+  const [descOpen, setDescOpen] = useState(false)
 
   const timeAgo = formatPostedTime(job.postedDate) || 'time unavailable'
 
@@ -19,6 +21,7 @@ export default function JobCard({ job }: Props) {
   }
 
   return (
+    <>
     <div className="card h-full flex flex-col p-4 sm:p-5 hover:border-gray-300 dark:hover:border-slate-600 transition-all duration-200 group animate-slide-up">
       {/* Header */}
       <div className="flex items-start justify-between gap-3 mb-3">
@@ -31,7 +34,19 @@ export default function JobCard({ job }: Props) {
             <span className="line-clamp-1 break-words">{job.company}</span>
           </div>
         </div>
-        <PlatformBadge platform={job.platform} />
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {job.description && (
+            <button
+              type="button"
+              onClick={() => setDescOpen(true)}
+              title="View job description"
+              className="p-1 rounded-lg text-gray-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 transition-colors"
+            >
+              <FileText className="w-4 h-4" />
+            </button>
+          )}
+          <PlatformBadge platform={job.platform} />
+        </div>
       </div>
 
       {/* Meta */}
@@ -77,5 +92,15 @@ export default function JobCard({ job }: Props) {
         </button>
       </div>
     </div>
+
+    {descOpen && job.description && (
+      <JobDescriptionModal
+        title={job.title}
+        company={job.company}
+        description={job.description}
+        onClose={() => setDescOpen(false)}
+      />
+    )}
+    </>
   )
 }

@@ -458,6 +458,7 @@ export async function scrapeJobriver(
       platform: 'jobriver' as const,
     }))
     await enrichPostedDatesFromOpenedOffer(page, raw)
+
     onProgress({ type: 'progress', platform: 'jobriver', progress: 100 })
     return raw
       .sort((a, b) => {

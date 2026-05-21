@@ -170,7 +170,11 @@ export async function markStatusForUser(
   const nextAppliedAt =
     status === 'new' ? null : (currentAppliedAt ?? new Date().toISOString())
 
-  const updatePayload: Record<string, unknown> = { status, applied_at: nextAppliedAt }
+  const updatePayload: Record<string, unknown> = {
+    status,
+    applied_at: nextAppliedAt,
+    status_changed_at: new Date().toISOString(),
+  }
   if (opts && 'interviewAt' in opts) {
     updatePayload.interview_at = opts.interviewAt ?? null
     updatePayload.interview_reminder_sent_at = null
@@ -428,5 +432,6 @@ function dbRowToJob(row: Record<string, unknown>): Job {
     interviewAt: row.interview_at as string | undefined,
     interviewNotes: row.interview_notes as string | undefined,
     interviewReminderSentAt: row.interview_reminder_sent_at as string | undefined,
+    statusChangedAt: row.status_changed_at as string | undefined,
   }
 }

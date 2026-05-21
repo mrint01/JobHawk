@@ -2,12 +2,18 @@
  * Xing scraper — two-strategy approach:
  *
  *  Strategy A (preferred): Axios with stored session cookies.
- *  Strategy B (fallback):  Puppeteer with stored session cookies.
+ *  Strategy B (fallback):  Firefox (Playwright) with stored session cookies.
  *
  * Requires an active session stored via /api/auth/xing/connect.
  */
 import axios from 'axios'
-import { getBrowserPage, sleep } from '../utils/browser'
+import { sleep } from '../utils/browser'
+import {
+  closeXingFirefoxBrowser,
+  getXingFirefoxPage,
+  playwrightCookiesFromProtocol,
+  XING_AUTH_VIEWPORT,
+} from '../utils/xingFirefox'
 import { nanoid } from '../utils/nanoid'
 import { subMinutes, subHours, subDays, subWeeks } from 'date-fns'
 import { getSession } from '../utils/sessions'
@@ -64,6 +70,7 @@ async function scrapeXingAxios(
       keywords: jobTitle,
       location,
       sort: 'date',
+      sincePeriod: 'LAST_24_HOURS',
       limit: '15',
       offset: '0',
     })
@@ -110,7 +117,7 @@ async function scrapeXingAxios(
   }
 }
 
-// ── Strategy B: Puppeteer ─────────────────────────────────────────────────────
+// ── Strategy B: Firefox (Playwright) ──────────────────────────────────────────
 
 async function scrapeXingBrowser(
   jobTitle: string,
@@ -120,28 +127,33 @@ async function scrapeXingBrowser(
 ): Promise<ScrapedJob[]> {
   let page = null
   try {
-    // SPA needs stylesheets/scripts — same as LinkedIn. Default getBrowserPage(true) blocks CSS
-    // and often yields 0 cards, especially when other platforms use the shared browser in parallel.
-    page = await getBrowserPage(false)
+    page = await getXingFirefoxPage()
+    await page.setViewportSize(XING_AUTH_VIEWPORT)
 
     const session = getSession(userId, 'xing')
     if (session?.cookies.length) {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      await page.setCookie(...(session.cookies as any[]))
+      const pwCookies = playwrightCookiesFromProtocol(session.cookies)
+      if (pwCookies.length) {
+        await page.context().addCookies(pwCookies)
+      }
     }
 
-    const params = new URLSearchParams({ keywords: jobTitle, location, sort: 'date' })
+    const params = new URLSearchParams({
+      keywords: jobTitle,
+      location,
+      sort: 'date',
+      sincePeriod: 'LAST_24_HOURS',
+    })
     await page.goto(`https://www.xing.com/jobs/search?${params}`, {
       waitUntil: 'domcontentloaded',
       timeout: 30_000,
     })
 
-    // Let the jobs app hydrate (parallel scrapes compete for the same browser; DOM was often empty at 1.5s)
     await sleep(4000)
     await page
-      .waitForSelector('[data-testid="job-card"], [data-testid="job-title"], a[href*="/jobs/"]', {
-        timeout: 20_000,
-      })
+      .locator('[data-testid="job-card"], [data-testid="job-title"], a[href*="/jobs/"]')
+      .first()
+      .waitFor({ timeout: 20_000 })
       .catch(() => undefined)
 
     await sleep(800)
@@ -213,6 +225,7 @@ async function scrapeXingBrowser(
     return []
   } finally {
     if (page) await page.close().catch(() => undefined)
+    await closeXingFirefoxBrowser().catch(() => undefined)
   }
 }
 

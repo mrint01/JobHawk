@@ -59,7 +59,7 @@ export function buildInterviewReminderMail(input: InterviewReminderInput): { sub
   const subject = `${testPrefix}Interview reminder · ${input.title} · ${input.company}`
 
   const text = [
-    input.isTest ? 'This is a manual test send from JobHawk.' : 'Your interview is coming up in about 24 hours.',
+    input.isTest ? 'This is a manual test send from JobHawk.' : 'Your interview is scheduled for tomorrow.',
     '',
     `Stage: ${input.stageLabel}`,
     `Platform: ${platformName}`,

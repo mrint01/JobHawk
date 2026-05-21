@@ -16,6 +16,8 @@ import { getAuthBrowserPage, getBrowserPage, sleep } from '../utils/browser'
 import { saveSession, clearSession, sessionsForUser } from '../utils/sessions'
 import { closeLinkedInFirefoxBrowser, getLinkedInFirefoxPage } from '../utils/linkedinFirefox'
 import { playwrightCookiesToProtocol } from '../utils/linkedinPlaywrightCookies'
+import { closeXingFirefoxBrowser } from '../utils/xingFirefox'
+import { connectXingFirefox } from '../utils/xingFirefoxAuth'
 
 const router = Router()
 const MANUAL_LOGIN_WAIT_MS = 10 * 60 * 1000
@@ -136,9 +138,8 @@ async function clickFirstAvailableSelectorInAnyFrame(page: Page, selectors: stri
   return false
 }
 
-/** StepStone / Xing: fixed wait after login page load before handling cookies. */
+/** StepStone: fixed wait after login page load before handling cookies. */
 const STEPSTONE_COOKIE_SETTLE_MS = 7000
-const XING_COOKIE_SETTLE_MS = 7000
 
 const COOKIE_ACCEPT_SELECTORS = [
   'button[data-testid="uc-accept-all-button"]',
@@ -177,63 +178,8 @@ const COOKIE_ACCEPT_EXCLUDE_WORDS = [
   'einstellungen',
 ]
 
-async function tryXingShadowCookieAccept(page: Page): Promise<boolean> {
-  return page.evaluate(() => {
-    const targets: HTMLElement[] = []
-    const stack: (Document | ShadowRoot | Element)[] = [document]
-
-    while (stack.length > 0) {
-      const root = stack.pop()!
-      const children = Array.from(root.querySelectorAll('*'))
-      for (const node of children) {
-        const el = node as Element & { shadowRoot?: ShadowRoot | null }
-        if (el.shadowRoot) stack.push(el.shadowRoot)
-
-        if (node.matches('button[data-testid="uc-accept-all-button"], #ccmgt_explicit_accept')) {
-          targets.push(node as HTMLElement)
-        }
-      }
-    }
-
-    for (const target of targets) {
-      try {
-        target.click()
-        return true
-      } catch {
-        // continue
-      }
-    }
-
-    const clickByTextInRoot = (root: Document | ShadowRoot | Element): boolean => {
-      const nodes = Array.from(root.querySelectorAll('button, [role="button"], a, div, span')) as HTMLElement[]
-      for (const node of nodes) {
-        const txt = (node.innerText || node.textContent || '').trim().toLowerCase()
-        if (txt.includes('accept all') || txt.includes('alles akzeptieren') || txt === 'accept') {
-          try {
-            node.click()
-            return true
-          } catch {
-            // continue
-          }
-        }
-      }
-      return false
-    }
-
-    const roots: (Document | ShadowRoot | Element)[] = [document]
-    while (roots.length > 0) {
-      const root = roots.pop()!
-      if (clickByTextInRoot(root)) return true
-      for (const el of Array.from(root.querySelectorAll('*')) as Array<Element & { shadowRoot?: ShadowRoot | null }>) {
-        if (el.shadowRoot) roots.push(el.shadowRoot)
-      }
-    }
-    return false
-  }).catch(() => false)
-}
-
 /**
- * StepStone: wait 7s for page + cookie UI, then try to dismiss (same pattern as Xing — no polling loop).
+ * StepStone: wait 7s for page + cookie UI, then try to dismiss.
  */
 async function acceptCookieConsentIfPresentStepStone(page: Page): Promise<void> {
   await sleep(STEPSTONE_COOKIE_SETTLE_MS)
@@ -260,33 +206,6 @@ async function acceptCookieConsentIfPresentStepStone(page: Page): Promise<void> 
     }
     if (await clickTextMatchInAnyFrame(page, COOKIE_ACCEPT_INCLUDE_WORDS, COOKIE_ACCEPT_EXCLUDE_WORDS)) {
       console.log(`[auth/stepstone] accepted cookie banner via text match (attempt ${attempt})`)
-      await sleep(700)
-      return
-    }
-    await sleep(1200)
-  }
-}
-
-/**
- * Xing: previous behavior — fixed wait for page/cookie UI, shadow-dom accept first, then selector/text retries (no polling loop).
- */
-async function acceptCookieConsentIfPresentXing(page: Page): Promise<void> {
-  await sleep(XING_COOKIE_SETTLE_MS)
-
-  if (await tryXingShadowCookieAccept(page)) {
-    console.log('[auth/xing] accepted cookie banner via xing shadow-dom fallback')
-    await sleep(900)
-    return
-  }
-
-  for (let attempt = 1; attempt <= 3; attempt++) {
-    if (await clickFirstAvailableSelectorInAnyFrame(page, COOKIE_ACCEPT_SELECTORS)) {
-      console.log(`[auth/xing] accepted cookie banner via selector (attempt ${attempt})`)
-      await sleep(700)
-      return
-    }
-    if (await clickTextMatchInAnyFrame(page, COOKIE_ACCEPT_INCLUDE_WORDS, COOKIE_ACCEPT_EXCLUDE_WORDS)) {
-      console.log(`[auth/xing] accepted cookie banner via text match (attempt ${attempt})`)
       await sleep(700)
       return
     }
@@ -683,66 +602,7 @@ async function connectLinkedInHeadless(email: string, password: string, userId: 
 }
 
 async function connectXingHeadless(email: string, password: string, userId: string): Promise<{ ok: boolean; error?: string }> {
-  let page: Page | null = null
-  try {
-    page = await getBrowserPage(false, { showMouseOverlay: false, reuseBlankPage: true })
-    await page.goto('https://login.xing.com/', {
-      waitUntil: 'domcontentloaded',
-      timeout: 35_000,
-    })
-    await sleep(400)
-    await acceptCookieConsentIfPresentXing(page)
-
-    const filledEmail = await typeIntoFirstAvailableSelector(page, [
-      'input[type="email"]',
-      'input[name="username"]',
-      'input[name="email"]',
-      '#username',
-      '#login-email',
-    ], email)
-    const filledPassword = await typeIntoFirstAvailableSelector(page, [
-      'input[type="password"]',
-      'input[name="password"]',
-      '#password',
-      '#login-password',
-    ], password)
-    if (!filledEmail || !filledPassword) {
-      return { ok: false, error: 'Could not find Xing login fields. Please try again.' }
-    }
-
-    await submitLoginForm(page, 'xing', [
-      'button[type="submit"]',
-      'button[name="btn_login"]',
-      'button[data-testid*="login"]',
-      'button[data-xds="Button"][type="submit"]',
-      'button.login-form-styled__SubmitButton-sc-d86d19cd-9',
-      'button[id*="login"]',
-      'button[class*="login"]',
-      'input[type="submit"]',
-    ], [
-      'log in',
-      'login',
-      'anmelden',
-      'einloggen',
-      'sign in',
-    ])
-
-    await page.waitForNavigation({ waitUntil: 'domcontentloaded', timeout: 20_000 }).catch(() => undefined)
-    await sleep(2500)
-
-    const cookies = await page.cookies('https://www.xing.com', 'https://login.xing.com') as unknown as Protocol.Network.CookieParam[]
-    const currentUrl = page.url().toLowerCase()
-    if (cookies.length === 0 || currentUrl.includes('login.xing.com')) {
-      return { ok: false, error: 'Xing login failed. Check your credentials and try again.' }
-    }
-
-    await saveSession(userId, 'xing', { cookies, loggedInAt: new Date(), username: email })
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, error: err instanceof Error ? err.message : 'Xing login failed' }
-  } finally {
-    if (page) await page.close().catch(() => undefined)
-  }
+  return connectXingFirefox(email, password, userId)
 }
 
 // Status - which platforms have an active session for this user
@@ -758,6 +618,9 @@ router.post('/:platform/disconnect', async (req: Request, res: Response) => {
   await clearSession(userId, platform)
   if (platform === 'linkedin') {
     await closeLinkedInFirefoxBrowser().catch(() => undefined)
+  }
+  if (platform === 'xing') {
+    await closeXingFirefoxBrowser().catch(() => undefined)
   }
   res.json({ ok: true })
 })

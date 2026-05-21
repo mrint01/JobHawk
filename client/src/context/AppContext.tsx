@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useCallback, useEffect, useRef } from 'react'
 import type { Job, JobStatus, ScrapeParams, ScrapeProgress, AppState, Platform, Theme } from '../types'
-import { PIPELINE_STATUSES } from '../types'
+import { PIPELINE_STATUSES, ACTIVE_PIPELINE_STATUSES } from '../types'
 import { getAppState, saveAppState } from '../services/storage'
 import { scrapeAll } from '../services/scrapers'
 import {
@@ -63,6 +63,7 @@ interface AppContextValue {
   newJobs: Job[]
   appliedJobs: Job[]
   pipelineJobs: Job[]
+  activePipelineJobs: Job[]
   markApplied: (id: string) => void
   markUnapplied: (id: string) => void
   updateJobStatus: (id: string, status: JobStatus, opts?: { interviewAt?: string | null }) => void
@@ -94,7 +95,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [platformConnecting, setPlatformConnecting] = useState<Platform | null>(null)
   const [linkedinAgent, setLinkedinAgent] = useState<LinkedInAgentStatus>({ connected: false, hasSession: false, username: '' })
   const [indeedAgent, setIndeedAgent] = useState<IndeedAgentStatus>({ connected: false })
-  const [indeedBrowser, setIndeedBrowser] = useState<string>(() => localStorage.getItem('indeedBrowser') ?? 'chrome')
+  const [indeedBrowser, setIndeedBrowser] = useState<string>(() => localStorage.getItem('indeedBrowser') ?? 'browseruse')
   const jobsLoadedRef = useRef(false)
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), [])
@@ -166,6 +167,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const newJobs = jobs.filter((j) => j.status === 'new')
   const appliedJobs = jobs.filter((j) => j.status !== 'new')
   const pipelineJobs = jobs.filter((j) => PIPELINE_STATUSES.includes(j.status))
+  const activePipelineJobs = jobs.filter((j) => ACTIVE_PIPELINE_STATUSES.includes(j.status))
   const isScraping = scrapeProgress?.isRunning ?? false
 
   const refreshLinkedInAgent = useCallback(async (forceSessionCheck = false): Promise<LinkedInAgentStatus> => {
@@ -314,6 +316,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           status,
           appliedAt: nextAppliedAt,
           interviewAt: nextInterviewAt,
+          statusChangedAt: status !== j.status ? new Date().toISOString() : j.statusChangedAt,
           ...(interviewAt !== undefined ? { interviewReminderSentAt: undefined } : {}),
         }
       }),
@@ -394,7 +397,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       linkedinAgent, refreshLinkedInAgent, setLinkedInEnabled,
       indeedAgent, refreshIndeedAgent, setIndeedEnabled,
       indeedBrowser, setIndeedBrowser: handleSetIndeedBrowser,
-      jobs, newJobs, appliedJobs, pipelineJobs, isJobsLoading, markApplied, markUnapplied, updateJobStatus, updateJobInterview, deleteJob, clearJobs, clearJobOffers,
+      jobs, newJobs, appliedJobs, pipelineJobs, activePipelineJobs, isJobsLoading, markApplied, markUnapplied, updateJobStatus, updateJobInterview, deleteJob, clearJobs, clearJobOffers,
       scrapeProgress, isScraping, startScrape, toasts, addToast, removeToast,
     }}>
       {children}

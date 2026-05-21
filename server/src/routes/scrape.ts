@@ -7,9 +7,8 @@ import { SCRAPE_JOBS_PER_PLATFORM_LIMIT } from '../scrapers/limits'
 import { closeScrapeBrowser } from '../utils/browser'
 import { mergeJobsForUser } from '../utils/jobStore'
 import { resolveUserId } from '../utils/userStore'
-import { isAgentReady, dispatchScrapeToAgent, sendDescribeJobs } from '../utils/linkedinAgentHub'
+import { isAgentReady, dispatchScrapeToAgent } from '../utils/linkedinAgentHub'
 import { isIndeedAgentReady, dispatchIndeedScrapeToAgent } from '../utils/indeedAgentHub'
-import { enrichJobsBackground } from '../utils/descriptionEnricher'
 
 const router = Router()
 
@@ -97,18 +96,6 @@ router.post('/', async (req: Request, res: Response) => {
     }
     allJobs.sort((a, b) => new Date(b.postedDate).getTime() - new Date(a.postedDate).getTime())
     const saved = await mergeJobsForUser(userId, allJobs)
-
-    // Phase 2: background description enrichment (non-blocking)
-    const noDesc = saved.filter((j) => !j.description)
-    const liJobs = noDesc.filter((j) => j.platform === 'linkedin')
-    if (liJobs.length > 0 && isAgentReady()) {
-      sendDescribeJobs(liJobs.map((j) => ({ url: j.url })), userId)
-    }
-    const serverJobs = noDesc
-      .filter((j) => ['indeed', 'stepstone', 'xing', 'jobriver'].includes(j.platform))
-      .map((j) => ({ id: j.id, url: j.url, platform: j.platform, userId }))
-    if (serverJobs.length > 0) enrichJobsBackground(serverJobs)
-
     res.json({ jobs: saved, events })
   } finally {
     await closeScrapeBrowser().catch(() => undefined)

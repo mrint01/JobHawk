@@ -17,6 +17,13 @@ export const PIPELINE_STATUSES: JobStatus[] = [
   'accepted',
 ]
 
+/** In-progress interview stages (excludes terminal accepted/refused). */
+export const ACTIVE_PIPELINE_STATUSES: JobStatus[] = [
+  'hr_interview',
+  'technical_interview',
+  'second_technical_interview',
+]
+
 export type Theme = 'dark' | 'light'
 
 export interface Job {
@@ -37,6 +44,7 @@ export interface Job {
   interviewAt?: string
   interviewNotes?: string
   interviewReminderSentAt?: string
+  statusChangedAt?: string
 }
 
 export interface ScrapeParams {

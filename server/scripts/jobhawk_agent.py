@@ -50,6 +50,15 @@ try:
 except ImportError:
     _stealth_available = False
 
+# Optional patchright — patched Playwright Chromium with all automation flags removed.
+# Replaces standard Playwright for Indeed so the browser looks like real Chrome to websites.
+# Install: pip install patchright && patchright install chromium
+try:
+    from patchright.async_api import async_playwright as _patchright_playwright
+    _patchright_available = True
+except ImportError:
+    _patchright_available = False
+
 # ── Imports ────────────────────────────────────────────────────────────────────
 import asyncio
 import json
@@ -60,8 +69,6 @@ import signal
 import logging
 import argparse
 import random
-import shutil
-import subprocess
 from urllib.request import urlopen
 from urllib.error import URLError, HTTPError
 from urllib.parse import urlencode
@@ -73,22 +80,20 @@ from playwright.async_api import BrowserContext, Page
 # ── Config ─────────────────────────────────────────────────────────────────────
 VERSION = "2.0.0"
 
-PROFILE_DIR           = Path.home() / ".jobradar_agent"
-LINKEDIN_PROFILE      = PROFILE_DIR / "chrome_profile_linkedin"
-INDEED_PROFILE        = PROFILE_DIR / "webkit_profile_indeed"
-SUPERPOWERS_EXT       = PROFILE_DIR / "superpowers_ext"
-INDEED_CHROME_PROFILE    = Path.home() / ".config" / "jobhawk-chrome"
-INDEED_FF_PROFILE        = PROFILE_DIR / "firefox_profile_indeed"
-INDEED_WEBKIT_PROFILE    = PROFILE_DIR / "webkit_profile_indeed"
-INDEED_CHROMIUM_PROFILE  = PROFILE_DIR / "chromium_profile_indeed"
+PROFILE_DIR             = Path.home() / ".jobradar_agent"
+LINKEDIN_PROFILE        = PROFILE_DIR / "chrome_profile_linkedin"
+SUPERPOWERS_EXT         = PROFILE_DIR / "superpowers_ext"
+INDEED_FF_PROFILE       = PROFILE_DIR / "firefox_profile_indeed"
+INDEED_WEBKIT_PROFILE   = PROFILE_DIR / "webkit_profile_indeed"
+INDEED_CHROMIUM_PROFILE = PROFILE_DIR / "chromium_profile_indeed"
 
 # Baked in at download time; override via env var or --backend flag.
-DEFAULT_BACKEND_URL = "https://jobhawk-server-production.up.railway.app"
+DEFAULT_BACKEND_URL = "https://jobhawk-production.up.railway.app"
 # DEFAULT_BACKEND_URL = "http://localhost:3001"
-# DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-server-production.up.railway.app"
+# DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-production.up.railway.app"
 # Set to False to see the browser window (useful for debugging captchas).
 LINKEDIN_HEADLESS = True
-INDEED_HEADLESS   = True
+INDEED_HEADLESS   = False
 HEARTBEAT_INTERVAL       = 25
 RECONNECT_DELAY          = 5
 MAX_RECONNECT_DELAY      = 60
@@ -112,61 +117,6 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 log = logging.getLogger("jobhawk-agent")
-
-
-# ── Chrome auto-launch (for Indeed CDP mode) ──────────────────────────────────
-
-def _find_chrome_binary() -> Optional[str]:
-    for name in ["google-chrome", "google-chrome-stable", "chromium-browser", "chromium", "chrome"]:
-        path = shutil.which(name)
-        if path:
-            return path
-    return None
-
-
-async def _chrome_cdp_ready(port: int) -> bool:
-    """Return True if Chrome is already listening on the CDP port."""
-    try:
-        await asyncio.to_thread(
-            lambda: urlopen(f"http://localhost:{port}/json/version", timeout=2).read(256)
-        )
-        return True
-    except Exception:
-        return False
-
-
-async def _ensure_chrome_running(port: int) -> bool:
-    """Start Chrome for Indeed if it's not already up. Returns True when ready."""
-    if await _chrome_cdp_ready(port):
-        log.info(f"[indeed] Chrome already running on port {port}")
-        return True
-
-    chrome = _find_chrome_binary()
-    if not chrome:
-        print("\n❌  Could not find Chrome. Install google-chrome or chromium.")
-        return False
-
-    INDEED_CHROME_PROFILE.mkdir(parents=True, exist_ok=True)
-    cmd = [
-        chrome,
-        f"--remote-debugging-port={port}",
-        f"--user-data-dir={INDEED_CHROME_PROFILE}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--disable-default-apps",
-    ]
-    log.info(f"[indeed] launching Chrome: {' '.join(cmd)}")
-    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-
-    # Poll until CDP is up (up to 15 s)
-    for _ in range(30):
-        await asyncio.sleep(0.5)
-        if await _chrome_cdp_ready(port):
-            log.info(f"[indeed] ✅ Chrome ready on port {port}")
-            return True
-
-    print(f"\n❌  Chrome launched but did not respond on port {port} within 15 s.")
-    return False
 
 
 # ── Superpowers extension ──────────────────────────────────────────────────────
@@ -251,8 +201,17 @@ class IndeedCaptchaError(Exception):
     """Raised when Indeed serves a verification/captcha wall."""
 
 
-# German and English patterns Indeed shows when it blocks automation
-_CAPTCHA_PATTERNS = [
+# Cloudflare JS challenges — patchright can auto-solve these if we just wait
+_CLOUDFLARE_PATTERNS = [
+    "just a moment",
+    "checking your browser",
+    "cf-browser-verification",
+    "cf_chl_prog",
+    "enable javascript and cookies to continue",
+]
+
+# Hard bot-walls that require human intervention — stop immediately
+_HARD_CAPTCHA_PATTERNS = [
     "zusätzliche verifizierung erforderlich",
     "additional verification required",
     "verify you are human",
@@ -260,31 +219,41 @@ _CAPTCHA_PATTERNS = [
     "bitte bestätigen sie, dass sie kein roboter",
     "please verify you are a human",
     "access to this page has been denied",
-    "just a moment",           # Cloudflare interstitial
-    "checking your browser",   # Cloudflare
-    "enable javascript and cookies to continue",
-    "cf-browser-verification",
-    "cf_chl_prog",             # Cloudflare challenge
     "security check",
     "automated access",
 ]
 
 
-async def _check_indeed_captcha(page: Page) -> bool:
-    """Return True if the current page is a bot-detection / captcha wall."""
+async def _page_text(page: Page) -> str:
     try:
         title = (await page.title()).lower()
-        # Fast path: title often gives it away
-        for p in _CAPTCHA_PATTERNS:
-            if p in title:
-                return True
-        # Slower path: scan visible text (avoids loading full HTML)
-        body_text = await page.evaluate("document.body ? document.body.innerText.toLowerCase() : ''")
-        for p in _CAPTCHA_PATTERNS:
-            if p in body_text:
-                return True
+        body = await page.evaluate("document.body ? document.body.innerText.toLowerCase() : ''")
+        return title + " " + body
     except Exception:
-        pass
+        return ""
+
+
+async def _check_indeed_captcha(page: Page) -> bool:
+    """Return True if blocked by a wall that won't auto-resolve.
+    Cloudflare JS challenges are given up to 20 s for patchright to solve them."""
+    text = await _page_text(page)
+
+    if any(p in text for p in _HARD_CAPTCHA_PATTERNS):
+        return True
+
+    if any(p in text for p in _CLOUDFLARE_PATTERNS):
+        log.info("[indeed] Cloudflare challenge — waiting for auto-resolve…")
+        for _ in range(10):
+            await asyncio.sleep(2.0)
+            text2 = await _page_text(page)
+            if not any(p in text2 for p in _CLOUDFLARE_PATTERNS):
+                if any(p in text2 for p in _HARD_CAPTCHA_PATTERNS):
+                    return True
+                log.info("[indeed] ✅ Cloudflare resolved")
+                return False
+        log.warning("[indeed] Cloudflare did not resolve within 20 s")
+        return True
+
     return False
 
 
@@ -332,18 +301,19 @@ def parse_indeed_date(raw: str) -> str:
 
 _WEBKIT_INIT_SCRIPT = """
 (function () {
-    // Safari/Mac fingerprint patches
     function def(obj, prop, val) {
         try { Object.defineProperty(obj, prop, { get: function(){ return val; }, configurable: true }); } catch(e) {}
     }
-    def(navigator, 'webdriver',          undefined);
-    def(navigator, 'platform',           'MacIntel');
-    def(navigator, 'vendor',             'Apple Computer, Inc.');
-    def(navigator, 'hardwareConcurrency', 8);
-    def(navigator, 'maxTouchPoints',      0);
-    def(navigator, 'deviceMemory',        8);
-    def(navigator, 'languages',          ['de-DE', 'de', 'en']);
-    def(navigator, 'plugins',            []);
+
+    // Safari/Mac fingerprint
+    def(navigator, 'webdriver',           undefined);
+    def(navigator, 'platform',            'MacIntel');
+    def(navigator, 'vendor',              'Apple Computer, Inc.');
+    def(navigator, 'hardwareConcurrency',  8);
+    def(navigator, 'maxTouchPoints',       0);
+    def(navigator, 'deviceMemory',         8);
+    def(navigator, 'languages',           ['de-DE', 'de', 'en']);
+    def(navigator, 'plugins',             []);
 
     // Screen: MacBook 1440×900, Retina colour depth
     def(screen, 'width',       1440);
@@ -353,8 +323,9 @@ _WEBKIT_INIT_SCRIPT = """
     def(screen, 'colorDepth',    30);
     def(screen, 'pixelDepth',    30);
 
-    // Canvas fingerprint noise — imperceptible offset so every session differs
+    // Canvas fingerprint noise — imperceptible offset, unique per session
     try {
+        var _cx = Math.random() * 0.4 - 0.2, _cy = Math.random() * 0.4 - 0.2;
         var origGC = HTMLCanvasElement.prototype.getContext;
         HTMLCanvasElement.prototype.getContext = function(type) {
             var ctx = origGC.apply(this, arguments);
@@ -362,18 +333,73 @@ _WEBKIT_INIT_SCRIPT = """
                 var origFT = ctx.fillText.bind(ctx);
                 ctx.fillText = function(text, x, y) {
                     var extra = arguments.length > 3 ? [arguments[3]] : [];
-                    return origFT.apply(ctx, [text, x + (Math.random() * 0.4 - 0.2), y].concat(extra));
+                    return origFT.apply(ctx, [text, x + _cx, y + _cy].concat(extra));
                 };
             }
             return ctx;
         };
     } catch(e) {}
 
+    // WebGL vendor / renderer — report Apple GPU
+    try {
+        var _patchWGL = function(klass) {
+            if (!window[klass]) return;
+            var _orig = window[klass].prototype.getParameter;
+            window[klass].prototype.getParameter = function(p) {
+                if (p === 37445) return 'Apple Inc.';
+                if (p === 37446) return 'Apple GPU';
+                return _orig.call(this, p);
+            };
+        };
+        _patchWGL('WebGLRenderingContext');
+        _patchWGL('WebGL2RenderingContext');
+    } catch(e) {}
+
+    // AudioContext — per-session noise so audio fingerprint differs
+    try {
+        var _aNoise = (Math.random() * 2e-7) - 1e-7;
+        var _origCB = AudioContext.prototype.createBuffer;
+        AudioContext.prototype.createBuffer = function(ch, len, sr) {
+            var buf = _origCB.call(this, ch, len, sr);
+            for (var c = 0; c < buf.numberOfChannels; c++) {
+                var d = buf.getChannelData(c);
+                for (var i = 0; i < Math.min(d.length, 100); i++) d[i] += _aNoise;
+            }
+            return buf;
+        };
+    } catch(e) {}
+
+    // Battery API — report nearly-full, on charger
+    try {
+        def(navigator, 'getBattery', function() {
+            return Promise.resolve({
+                charging: true, chargingTime: 0, dischargingTime: Infinity,
+                level: 0.97 + Math.random() * 0.02,
+                onchargingchange: null, onchargingtimechange: null,
+                ondischargingtimechange: null, onlevelchange: null
+            });
+        });
+    } catch(e) {}
+
+    // Network connection info
+    try {
+        def(navigator, 'connection', {
+            downlink: 10, effectiveType: '4g', rtt: 50, saveData: false, onchange: null
+        });
+    } catch(e) {}
+
+    // Performance timing noise — prevent timing-based fingerprinting
+    try {
+        var _pNoise = Math.random() * 3;
+        var _origNow = Performance.prototype.now;
+        Performance.prototype.now = function() { return _origNow.call(this) + _pNoise; };
+    } catch(e) {}
+
     // Permissions API — degrade gracefully instead of throwing
     if (navigator.permissions && navigator.permissions.query) {
-        var origQuery = navigator.permissions.query.bind(navigator.permissions);
+        var _origQ = navigator.permissions.query.bind(navigator.permissions);
         navigator.permissions.query = function(desc) {
-            return origQuery(desc).catch(function() {
+            return _origQ(desc).catch(function() {
                 return Promise.resolve({ state: 'denied', onchange: null });
             });
         };
@@ -381,17 +407,149 @@ _WEBKIT_INIT_SCRIPT = """
 })();
 """
 
+# Init script applied to Indeed's Chromium context (Chromium-appropriate fingerprint)
+_CHROMIUM_INDEED_INIT_SCRIPT = """
+(function () {
+    function def(obj, prop, val) {
+        try { Object.defineProperty(obj, prop, { get: function(){ return val; }, configurable: true }); } catch(e) {}
+    }
 
-async def _random_mouse_wander(page: Page, steps: int = 3) -> None:
-    """Move mouse to a few random viewport positions to mimic natural reading."""
-    for _ in range(steps):
-        x = random.randint(180, 1180)
-        y = random.randint(80, 640)
+    def(navigator, 'webdriver',           undefined);
+    def(navigator, 'platform',            'Win32');
+    def(navigator, 'vendor',              'Google Inc.');
+    def(navigator, 'hardwareConcurrency',  8);
+    def(navigator, 'maxTouchPoints',       0);
+    def(navigator, 'deviceMemory',         8);
+    def(navigator, 'languages',           ['de-DE', 'de', 'en-US', 'en']);
+
+    // Minimal chrome object so scripts that probe window.chrome don't flag headless
+    try {
+        if (!window.chrome) window.chrome = {};
+        if (!window.chrome.runtime) window.chrome.runtime = {
+            onConnect:  { addListener: function(){}, removeListener: function(){} },
+            onMessage:  { addListener: function(){}, removeListener: function(){} },
+            id: undefined
+        };
+        if (!window.chrome.app) window.chrome.app = { isInstalled: false };
+    } catch(e) {}
+
+    // Canvas noise
+    try {
+        var _cx = Math.random() * 0.4 - 0.2, _cy = Math.random() * 0.4 - 0.2;
+        var origGC = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function(type) {
+            var ctx = origGC.apply(this, arguments);
+            if (ctx && type === '2d') {
+                var origFT = ctx.fillText.bind(ctx);
+                ctx.fillText = function(text, x, y) {
+                    var extra = arguments.length > 3 ? [arguments[3]] : [];
+                    return origFT.apply(ctx, [text, x + _cx, y + _cy].concat(extra));
+                };
+            }
+            return ctx;
+        };
+    } catch(e) {}
+
+    // WebGL — Intel GPU (common Windows laptop)
+    try {
+        var _patchWGL = function(klass) {
+            if (!window[klass]) return;
+            var _orig = window[klass].prototype.getParameter;
+            window[klass].prototype.getParameter = function(p) {
+                if (p === 37445) return 'Google Inc. (Intel)';
+                if (p === 37446) return 'ANGLE (Intel, Intel(R) UHD Graphics 620 Direct3D11 vs_5_0 ps_5_0, D3D11)';
+                return _orig.call(this, p);
+            };
+        };
+        _patchWGL('WebGLRenderingContext');
+        _patchWGL('WebGL2RenderingContext');
+    } catch(e) {}
+
+    // AudioContext noise
+    try {
+        var _aNoise = (Math.random() * 2e-7) - 1e-7;
+        var _origCB = AudioContext.prototype.createBuffer;
+        AudioContext.prototype.createBuffer = function(ch, len, sr) {
+            var buf = _origCB.call(this, ch, len, sr);
+            for (var c = 0; c < buf.numberOfChannels; c++) {
+                var d = buf.getChannelData(c);
+                for (var i = 0; i < Math.min(d.length, 100); i++) d[i] += _aNoise;
+            }
+            return buf;
+        };
+    } catch(e) {}
+
+    // Battery API
+    try {
+        def(navigator, 'getBattery', function() {
+            return Promise.resolve({
+                charging: true, chargingTime: 0, dischargingTime: Infinity,
+                level: 0.95 + Math.random() * 0.04,
+                onchargingchange: null, onchargingtimechange: null,
+                ondischargingtimechange: null, onlevelchange: null
+            });
+        });
+    } catch(e) {}
+
+    // Connection info
+    try {
+        def(navigator, 'connection', {
+            downlink: 10, effectiveType: '4g', rtt: 50, saveData: false, onchange: null
+        });
+    } catch(e) {}
+
+    // Performance noise
+    try {
+        var _pNoise = Math.random() * 3;
+        var _origNow = Performance.prototype.now;
+        Performance.prototype.now = function() { return _origNow.call(this) + _pNoise; };
+    } catch(e) {}
+
+    // Permissions
+    if (navigator.permissions && navigator.permissions.query) {
+        var _origQ = navigator.permissions.query.bind(navigator.permissions);
+        navigator.permissions.query = function(desc) {
+            return _origQ(desc).catch(function() {
+                return Promise.resolve({ state: 'prompt', onchange: null });
+            });
+        };
+    }
+})();
+"""
+
+
+# Per-page mouse position tracking for Bezier movement (Indeed only)
+_mouse_positions: Dict[int, tuple] = {}
+
+
+async def _human_mouse_move(page: Page, tx: float, ty: float) -> None:
+    """Move mouse to (tx, ty) along a quadratic Bezier arc — mimics natural hand movement."""
+    pid = id(page)
+    sx, sy = _mouse_positions.get(pid, (random.uniform(300, 800), random.uniform(200, 500)))
+    # Control point offset creates the arc
+    cx = (sx + tx) / 2 + random.uniform(-120, 120)
+    cy = (sy + ty) / 2 + random.uniform(-70, 70)
+    steps = random.randint(10, 18)
+    for i in range(1, steps + 1):
+        t = i / steps
+        bx = (1 - t) ** 2 * sx + 2 * (1 - t) * t * cx + t ** 2 * tx
+        by = (1 - t) ** 2 * sy + 2 * (1 - t) * t * cy + t ** 2 * ty
         try:
-            await page.mouse.move(x, y)
+            await page.mouse.move(bx, by)
         except Exception:
             break
-        await asyncio.sleep(random.uniform(0.07, 0.20))
+        await asyncio.sleep(random.uniform(0.008, 0.022))
+    _mouse_positions[pid] = (tx, ty)
+
+
+async def _random_mouse_wander(page: Page, steps: int = 3) -> None:
+    """Wander the mouse across random viewport positions — indeed-only human simulation."""
+    for _ in range(steps):
+        x = random.uniform(160, 1200)
+        y = random.uniform(80, 650)
+        await _human_mouse_move(page, x, y)
+        if random.random() < 0.35:
+            await asyncio.sleep(random.uniform(0.12, 0.40))
 
 
 # ── LinkedIn JS snippets ───────────────────────────────────────────────────────
@@ -459,21 +617,91 @@ _LI_STATE_JS = """
 
 _LI_DESC_JS = """
 (() => {
-    const sels = [
-        '#job-details',
-        '.jobs-description__content',
-        '.jobs-description-content__text',
-        '.jobs-description'
-    ];
-    for (const s of sels) {
-        const el = document.querySelector(s);
-        if (el && el.innerText && el.innerText.trim().length > 50) return el.innerText.trim();
+    const containers = [
+        document.querySelector('#job-details'),
+        document.querySelector('.jobs-description__content'),
+        document.querySelector('.jobs-description-content__text'),
+        document.querySelector('.jobs-description')
+    ].filter(Boolean);
+
+    let text = '';
+    for (const el of containers) {
+        const t = el.innerText.trim();
+        if (t.length > 50) { text = t; break; }
     }
-    const main = document.querySelector('main') || document.querySelector('[role="main"]');
-    if (main && main.innerText && main.innerText.trim().length > 50) return main.innerText.trim().slice(0, 20000);
-    return '';
+    if (!text) {
+        const main = document.querySelector('main') || document.querySelector('[role="main"]');
+        if (main) text = main.innerText.trim();
+    }
+    if (!text || text.length < 50) return '';
+
+    // Start from "Details zum Jobangebot" / English equivalents
+    const startMarkers = ['Details zum Jobangebot', 'About the job', 'Über die Stelle', 'About this role'];
+    for (const m of startMarkers) {
+        const idx = text.indexOf(m);
+        if (idx !== -1) { text = text.slice(idx); break; }
+    }
+
+    // Stop before "Benachrichtigung für ähnliche Jobangebote einrichten" / English equivalents
+    const endMarkers = [
+        'Benachrichtigung für ähnliche Jobangebote einrichten',
+        'Set alert for similar jobs',
+        'Ähnliche Jobs per E-Mail',
+        'Job-Alert erstellen'
+    ];
+    for (const m of endMarkers) {
+        const idx = text.indexOf(m);
+        if (idx !== -1) { text = text.slice(0, idx).trim(); break; }
+    }
+
+    return text.length > 50 ? text.slice(0, 20000) : '';
 })()
 """
+
+_INDEED_DESC_JS = """
+(() => {
+    // Detect captcha / security check
+    const pageText = (document.body || document.documentElement).innerText || '';
+    if (/Zusätzliche Verifizierung erforderlich|captcha|security check|verify you are human|robot|Überprüfung erforderlich/i.test(pageText.slice(0, 3000))) {
+        return '__CAPTCHA__';
+    }
+
+    const sels = [
+        '#jobDescriptionText',
+        '.jobsearch-JobComponent-description',
+        '.jobsearch-jobDescriptionText',
+        '[data-testid="jobsearch-JobComponent-description"]',
+        '.jobDescription'
+    ];
+    let text = '';
+    for (const s of sels) {
+        const el = document.querySelector(s);
+        if (el && el.innerText && el.innerText.trim().length > 50) { text = el.innerText.trim(); break; }
+    }
+    if (!text) {
+        const main = document.querySelector('main') || document.querySelector('[role="main"]');
+        if (main && main.innerText) text = main.innerText.trim();
+    }
+    if (!text || text.length < 50) return '';
+
+    // Start after "Vollständige Stellenbeschreibung" / "Full job description" heading
+    const startMarkers = ['Vollständige Stellenbeschreibung', 'Full job description'];
+    for (const m of startMarkers) {
+        const idx = text.indexOf(m);
+        if (idx !== -1) { text = text.slice(idx + m.length).trim(); break; }
+    }
+
+    // Stop before "Diesen Job melden" / "Report job" button
+    const endMarkers = ['Diesen Job melden', 'Report job', 'Report this job'];
+    for (const m of endMarkers) {
+        const idx = text.indexOf(m);
+        if (idx !== -1) { text = text.slice(0, idx).trim(); break; }
+    }
+
+    return text.length > 50 ? text.slice(0, 20000) : '';
+})()
+"""
+
 
 _LI_EXTRACT_JS = """
 (() => {
@@ -543,7 +771,7 @@ _LI_EXTRACT_JS = """
 async def scrape_linkedin(page: Page, keywords: str, location: str, max_jobs: int, progress_cb=None) -> List[Dict]:
     params = urlencode({"keywords": keywords, "location": location, "f_TPR": "r604800", "sortBy": "DD", "start": "0"})
     url = f"https://www.linkedin.com/jobs/search/?{params}"
-    log.info(f"[linkedin] → {url}")
+
     await page.goto(url, wait_until="domcontentloaded", timeout=45_000)
     await asyncio.sleep(2)
 
@@ -572,7 +800,6 @@ async def scrape_linkedin(page: Page, keywords: str, location: str, max_jobs: in
                 collected[u] = j
 
     merge(await page.evaluate(_LI_EXTRACT_JS))
-    log.info(f"[linkedin] initial: {len(collected)} jobs")
 
     stuck, prev_count, no_scroll = 0, state["count"], 0
     for rnd in range(50):
@@ -588,9 +815,7 @@ async def scrape_linkedin(page: Page, keywords: str, location: str, max_jobs: in
         no_scroll = 0
         await asyncio.sleep(0.9)
         state = await page.evaluate(_LI_STATE_JS)
-        before = len(collected)
         merge(await page.evaluate(_LI_EXTRACT_JS))
-        log.info(f"[linkedin] round {rnd+1}: cards={state['count']} atBottom={state['atBottom']} +{len(collected)-before} total={len(collected)}")
         if progress_cb:
             await progress_cb(min(90, 25 + int(len(collected) / max(max_jobs, 1) * 65)))
         if state["count"] > prev_count:
@@ -750,20 +975,82 @@ async def _dismiss_indeed_consent(page: Page) -> None:
             pass
 
 
-async def _navigate_indeed(page: Page, search_url: str) -> int:
+async def _search_indeed_form(page: Page, keywords: str, location: str) -> bool:
+    """Type into Indeed's search form — far more human-like than direct URL navigation.
+    Returns True if the form was found, filled, and submitted successfully."""
+    try:
+        what = await page.wait_for_selector(
+            '#text-input-what, input[name="q"][type="text"]',
+            timeout=6_000,
+        )
+        if not what:
+            return False
+
+        bb = await what.bounding_box()
+        if bb:
+            await _human_mouse_move(page, bb["x"] + bb["width"] / 2, bb["y"] + bb["height"] / 2)
+        await what.click()
+        await asyncio.sleep(random.uniform(0.3, 0.6))
+        await page.keyboard.press("Control+a")
+        await asyncio.sleep(random.uniform(0.08, 0.18))
+        for ch in keywords:
+            await page.keyboard.type(ch)
+            await asyncio.sleep(random.uniform(0.04, 0.13))
+        await asyncio.sleep(random.uniform(0.4, 0.9))
+
+        if location.strip():
+            where = await page.query_selector('#text-input-where, input[name="l"][type="text"]')
+            if where:
+                bb2 = await where.bounding_box()
+                if bb2:
+                    await _human_mouse_move(page, bb2["x"] + bb2["width"] / 2, bb2["y"] + bb2["height"] / 2)
+                await where.triple_click()
+                await asyncio.sleep(random.uniform(0.1, 0.3))
+                for ch in location:
+                    await page.keyboard.type(ch)
+                    await asyncio.sleep(random.uniform(0.03, 0.10))
+                await asyncio.sleep(random.uniform(0.3, 0.6))
+
+        submitted = False
+        for sel in ['button[type="submit"]', 'button[data-testid="findJobsSubmit"]', '#whatWhereFormId button']:
+            btn = await page.query_selector(sel)
+            if btn:
+                bb3 = await btn.bounding_box()
+                if bb3:
+                    await _human_mouse_move(page, bb3["x"] + bb3["width"] / 2, bb3["y"] + bb3["height"] / 2)
+                await btn.click()
+                submitted = True
+                break
+        if not submitted:
+            await page.keyboard.press("Enter")
+
+        await page.wait_for_load_state("domcontentloaded", timeout=30_000)
+        return "q=" in page.url or "/jobs" in page.url
+
+    except Exception:
+        return False
+
+
+async def _navigate_indeed(page: Page, search_url: str, keywords: str = "", location: str = "") -> int:
     base = INDEED_BASE + "/"
     try:
         await page.goto(base, wait_until="domcontentloaded", timeout=60_000)
     except Exception:
         pass
-    # Dwell on homepage like a real user, move mouse around a bit
-    await asyncio.sleep(random.uniform(0.8, 1.8))
-    await _random_mouse_wander(page, steps=random.randint(2, 4))
-    await asyncio.sleep(random.uniform(0.3, 0.8))
 
+    await asyncio.sleep(random.uniform(1.5, 2.5))
+    await _dismiss_indeed_consent(page)
+    await asyncio.sleep(random.uniform(0.3, 0.7))
+    await _random_mouse_wander(page, steps=random.randint(2, 4))
+    await asyncio.sleep(random.uniform(0.5, 1.0))
+
+    # Primary: type into the search form — most human-like approach
+    if keywords and await _search_indeed_form(page, keywords, location):
+        return 200
+
+    # Fallback: direct URL navigation with referer
     try:
-        resp = await page.goto(search_url, wait_until="domcontentloaded", timeout=90_000,
-                               referer=base)
+        resp = await page.goto(search_url, wait_until="domcontentloaded", timeout=90_000, referer=base)
         status = resp.status if resp else 0
     except Exception as e:
         log.warning(f"[indeed] domcontentloaded failed ({e!s:.120}) — retrying with commit")
@@ -793,7 +1080,7 @@ async def _navigate_indeed(page: Page, search_url: str) -> int:
     return status
 
 
-async def scrape_indeed(page: Page, keywords: str, location: str, max_jobs: int, progress_cb=None) -> List[Dict]:
+async def scrape_indeed(page: Page, keywords: str, location: str, max_jobs: int, progress_cb=None, skip_stealth: bool = False) -> List[Dict]:
     from urllib.parse import urlencode as _ue
     params: Dict[str, str] = {"q": keywords.strip(), "sort": "date", "fromage": "last"}
     if location.strip():
@@ -801,8 +1088,9 @@ async def scrape_indeed(page: Page, keywords: str, location: str, max_jobs: int,
     search_url = f"{INDEED_BASE}/jobs?{_ue(params)}"
     log.info(f"[indeed] → {search_url}")
 
-    await _apply_stealth(page, chromium=False)
-    http_status = await _navigate_indeed(page, search_url)
+    if not skip_stealth:
+        await _apply_stealth(page, chromium=False)
+    http_status = await _navigate_indeed(page, search_url, keywords=keywords.strip(), location=location.strip())
     await asyncio.sleep(1.6)
 
     # ── Captcha / bot-wall check ───────────────────────────────────────────────
@@ -848,6 +1136,13 @@ async def scrape_indeed(page: Page, keywords: str, location: str, max_jobs: int,
         if len(merged) >= max_jobs:
             break
 
+        # Periodic captcha check — stop immediately if a bot-wall appears mid-scrape
+        if rnd % 8 == 7:
+            if await _check_indeed_captcha(page):
+                raise IndeedCaptchaError(
+                    "Captcha / bot-wall detected mid-scrape. Stopping immediately."
+                )
+
         state = await page.evaluate(_INDEED_STATE_JS)
         pct = min(95, 22 + round((rnd / 48) * 70))
         if progress_cb:
@@ -885,7 +1180,6 @@ async def scrape_indeed(page: Page, keywords: str, location: str, max_jobs: int,
             await _random_mouse_wander(page, steps=random.randint(1, 3))
 
         merge_batch(await page.evaluate(extract_js))
-        log.info(f"[indeed] round {rnd+1}: uniqueJk={state['uniqueJk']} collected={len(merged)}")
 
     result = list(merged.values())[:max_jobs]
     log.info(f"[indeed] total: {len(result)} jobs")
@@ -897,24 +1191,22 @@ async def scrape_indeed(page: Page, keywords: str, location: str, max_jobs: int,
 # ── JobHawk Agent ──────────────────────────────────────────────────────────────
 
 class JobHawkAgent:
-    def __init__(self, backend_url: str, cdp_port: Optional[int] = None):
+    def __init__(self, backend_url: str):
         self.backend_url = backend_url.rstrip("/")
         base_ws = self.backend_url.replace("https://", "wss://").replace("http://", "ws://")
         self.linkedin_ws_url = base_ws + "/ws/linkedin-agent"
         self.indeed_ws_url   = base_ws + "/ws/indeed-agent"
 
         self.playwright = None
-        self.linkedin_ctx:         Optional[BrowserContext] = None
-        self.indeed_firefox_ctx:   Optional[BrowserContext] = None  # lazy-init per browser
-        self.indeed_webkit_ctx:    Optional[BrowserContext] = None
-        self.indeed_chromium_ctx:  Optional[BrowserContext] = None
-        self._indeed_lock = asyncio.Lock()
-        self.cdp_port = cdp_port  # CDP port for Chrome; defaults to 9222 if not passed
+        self.linkedin_ctx: Optional[BrowserContext] = None
+        self.indeed_ctx:   Optional[BrowserContext] = None
+        self.indeed_browser_type: str = "webkit"  # set on first scrape
+        self._patchright_pcm = None  # patchright context manager (kept alive when browseruse mode)
 
         self.linkedin_has_session = False
         self.running = True
-        self._li_reconnect   = RECONNECT_DELAY
-        self._ind_reconnect  = RECONNECT_DELAY
+        self._li_reconnect  = RECONNECT_DELAY
+        self._ind_reconnect = RECONNECT_DELAY
 
     # ── Browser helpers ────────────────────────────────────────────────────────
 
@@ -932,17 +1224,88 @@ class JobHawkAgent:
             timezone_id="Europe/Berlin",
         )
 
-    async def _open_webkit_ctx(self, profile_dir: Path, headless: bool = True) -> BrowserContext:
-        """WebKit (Safari engine) persistent context — used for Indeed.
-        Non-Chromium fingerprint avoids most Indeed bot-detection heuristics."""
+    async def _open_indeed_ctx(self, browser_type: str) -> BrowserContext:
+        """Create a persistent Indeed browser context for the given engine."""
+        if browser_type == "browseruse":
+            # Patchright: patched Playwright Chromium with all automation markers removed.
+            # Indeed sees it as a regular Chrome — no bot walls, no captcha.
+            # Install: pip install patchright && patchright install chromium
+            if not _patchright_available:
+                raise RuntimeError(
+                    "patchright not installed. Run:\n"
+                    "    pip install patchright\n"
+                    "    patchright install chromium"
+                )
+            INDEED_CHROMIUM_PROFILE.mkdir(parents=True, exist_ok=True)
+            # Start a dedicated patchright instance (kept alive alongside self.indeed_ctx)
+            self._patchright_pcm = _patchright_playwright()
+            p = await self._patchright_pcm.start()
+            ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ctx = await p.chromium.launch_persistent_context(
+                str(INDEED_CHROMIUM_PROFILE),
+                headless=False,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--window-size=1366,768",
+                ],
+                user_agent=ua,
+                viewport={"width": 1366, "height": 768},
+                locale="de-DE",
+                timezone_id="Europe/Berlin",
+                extra_http_headers={
+                    "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                },
+            )
+            return ctx
+
+        if browser_type == "firefox":
+            INDEED_FF_PROFILE.mkdir(parents=True, exist_ok=True)
+            ua = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
+            return await self.playwright.firefox.launch_persistent_context(
+                str(INDEED_FF_PROFILE),
+                headless=INDEED_HEADLESS,
+                user_agent=ua,
+                viewport={"width": 1366, "height": 768},
+                locale="de-DE",
+                timezone_id="Europe/Berlin",
+                extra_http_headers={
+                    "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                },
+            )
+        if browser_type == "chromium":
+            INDEED_CHROMIUM_PROFILE.mkdir(parents=True, exist_ok=True)
+            ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            ctx = await self.playwright.chromium.launch_persistent_context(
+                str(INDEED_CHROMIUM_PROFILE),
+                headless=INDEED_HEADLESS,
+                args=_build_stealth_args(),
+                user_agent=ua,
+                viewport={"width": 1366, "height": 768},
+                locale="de-DE",
+                timezone_id="Europe/Berlin",
+                extra_http_headers={
+                    "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                    "Sec-CH-UA": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+                    "Sec-CH-UA-Mobile": "?0",
+                    "Sec-CH-UA-Platform": '"Windows"',
+                },
+            )
+            await ctx.add_init_script(_CHROMIUM_INDEED_INIT_SCRIPT)
+            return ctx
+        # Default: WebKit (Safari engine) — best anti-bot fingerprint for Indeed
+        INDEED_WEBKIT_PROFILE.mkdir(parents=True, exist_ok=True)
         ua = (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/605.1.15 (KHTML, like Gecko) "
             "Version/17.4.1 Safari/605.1.15"
         )
         ctx = await self.playwright.webkit.launch_persistent_context(
-            str(profile_dir),
-            headless=headless,
+            str(INDEED_WEBKIT_PROFILE),
+            headless=INDEED_HEADLESS,
             user_agent=ua,
             viewport={"width": 1366, "height": 768},
             locale="de-DE",
@@ -956,57 +1319,15 @@ class JobHawkAgent:
         await ctx.add_init_script(_WEBKIT_INIT_SCRIPT)
         return ctx
 
-    async def _get_firefox_ctx(self) -> BrowserContext:
-        """Lazy-init a persistent Firefox profile for Indeed. Created once, reused across scrapes."""
-        if self.indeed_firefox_ctx is None:
-            INDEED_FF_PROFILE.mkdir(parents=True, exist_ok=True)
-            log.info("[indeed] launching Firefox (first use)…")
-            ua = "Mozilla/5.0 (X11; Linux x86_64; rv:128.0) Gecko/20100101 Firefox/128.0"
-            self.indeed_firefox_ctx = await self.playwright.firefox.launch_persistent_context(
-                str(INDEED_FF_PROFILE),
-                headless=INDEED_HEADLESS,
-                user_agent=ua,
-                viewport={"width": 1366, "height": 768},
-                locale="de-DE",
-                timezone_id="Europe/Berlin",
-                extra_http_headers={
-                    "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                },
-            )
-            log.info("[indeed] ✅ Firefox ready")
-        return self.indeed_firefox_ctx
-
-    async def _get_webkit_ctx(self) -> BrowserContext:
-        """Lazy-init WebKit (Safari engine) persistent profile for Indeed."""
-        if self.indeed_webkit_ctx is None:
-            INDEED_WEBKIT_PROFILE.mkdir(parents=True, exist_ok=True)
-            log.info("[indeed] launching WebKit/Safari (first use)…")
-            self.indeed_webkit_ctx = await self._open_webkit_ctx(INDEED_WEBKIT_PROFILE, headless=INDEED_HEADLESS)
-            log.info("[indeed] ✅ WebKit ready")
-        return self.indeed_webkit_ctx
-
-    async def _get_chromium_ctx(self) -> BrowserContext:
-        """Lazy-init Playwright Chromium persistent profile for Indeed (no real Chrome needed)."""
-        if self.indeed_chromium_ctx is None:
-            INDEED_CHROMIUM_PROFILE.mkdir(parents=True, exist_ok=True)
-            log.info("[indeed] launching Chromium (first use)…")
-            ua = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            self.indeed_chromium_ctx = await self.playwright.chromium.launch_persistent_context(
-                str(INDEED_CHROMIUM_PROFILE),
-                headless=INDEED_HEADLESS,
-                args=_build_stealth_args(),
-                user_agent=ua,
-                viewport={"width": 1366, "height": 768},
-                locale="de-DE",
-                timezone_id="Europe/Berlin",
-                extra_http_headers={
-                    "Accept-Language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                },
-            )
-            log.info("[indeed] ✅ Chromium ready")
-        return self.indeed_chromium_ctx
+    async def _get_indeed_ctx(self, browser_type: str) -> BrowserContext:
+        """Return the persistent Indeed context, creating it on first call."""
+        if self.indeed_ctx is None:
+            self.indeed_browser_type = browser_type
+            label = "patchright (anti-detect Chrome)" if browser_type == "browseruse" else browser_type
+            log.info(f"[indeed] launching {label}…")
+            self.indeed_ctx = await self._open_indeed_ctx(browser_type)
+            log.info(f"[indeed] ✅ {browser_type} ready")
+        return self.indeed_ctx
 
     # ── LinkedIn auth ──────────────────────────────────────────────────────────
 
@@ -1090,7 +1411,7 @@ class JobHawkAgent:
                                 "url": url,
                                 "description": desc.strip(),
                             }))
-                            log.info(f"[linkedin] desc sent: {len(desc)} chars")
+
                         except Exception:
                             return  # WS closed, stop
                 except Exception as e:
@@ -1186,93 +1507,90 @@ class JobHawkAgent:
     # ── Indeed WS ─────────────────────────────────────────────────────────────
 
     async def _handle_indeed_scrape(self, ws, request_id: str, params: dict):
-        async with self._indeed_lock:
-            browser_choice = str(params.get("browser", "chrome")).lower()
-            ctx = None
-            persistent = False  # True = keep a blank keeper tab; False = close everything
-
-            if browser_choice == "firefox":
-                ctx = await self._get_firefox_ctx()
-                persistent = True
-            elif browser_choice == "webkit":
-                ctx = await self._get_webkit_ctx()
-                persistent = True
-            elif browser_choice == "chromium":
-                ctx = await self._get_chromium_ctx()
-                persistent = True
-            else:
-                # Chrome via CDP — fresh connection per scrape, no stale context issues
-                cdp_port = self.cdp_port or 9222
-                if not await _ensure_chrome_running(cdp_port):
-                    try:
-                        await ws.send(json.dumps({"type": "scrape_error", "requestId": request_id,
-                                                  "error": "Could not launch Chrome. Check that google-chrome is installed."}))
-                    except Exception:
-                        pass
-                    return
+        browser = str(params.get("browser", "webkit")).lower()
+        ctx = await self._get_indeed_ctx(browser)
+        page = await ctx.new_page()
+        try:
+            async def progress(pct: int):
                 try:
-                    browser = await self.playwright.chromium.connect_over_cdp(f"http://localhost:{cdp_port}")
-                    ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
-                except Exception as e:
-                    try:
-                        await ws.send(json.dumps({"type": "scrape_error", "requestId": request_id,
-                                                  "error": f"Chrome CDP connect failed: {e}"}))
-                    except Exception:
-                        pass
-                    return
+                    await ws.send(json.dumps({"type": "scrape_progress", "requestId": request_id, "progress": pct}))
+                except Exception:
+                    pass
 
-            page = await ctx.new_page()
+            await progress(10)
+            jobs = await scrape_indeed(
+                page,
+                params.get("keywords", ""),
+                params.get("location", ""),
+                int(params.get("maxJobs", MAX_JOBS)),
+                progress,
+                skip_stealth=(self.indeed_browser_type == "browseruse"),
+            )
+            await progress(100)
+            await ws.send(json.dumps({"type": "scrape_result", "requestId": request_id, "jobs": jobs, "count": len(jobs)}))
+            log.info(f"[indeed] scrape done — {len(jobs)} jobs")
+        except IndeedCaptchaError as e:
+            log.warning(f"[indeed] captcha detected — stopping: {e}")
             try:
-                async def progress(pct: int):
-                    try:
-                        await ws.send(json.dumps({"type": "scrape_progress", "requestId": request_id, "progress": pct}))
-                    except Exception:
-                        pass
+                await ws.send(json.dumps({"type": "scrape_error", "requestId": request_id, "error": str(e)}))
+            except Exception:
+                pass
+        except Exception as e:
+            log.error(f"[indeed] scrape error: {e}")
+            try:
+                await ws.send(json.dumps({"type": "scrape_error", "requestId": request_id, "error": str(e)}))
+            except Exception:
+                pass
+        finally:
+            await page.close()
 
-                await progress(10)
-                jobs = await scrape_indeed(
-                    page,
-                    params.get("keywords", ""),
-                    params.get("location", ""),
-                    int(params.get("maxJobs", MAX_JOBS)),
-                    progress,
-                )
-                await progress(100)
-                await ws.send(json.dumps({"type": "scrape_result", "requestId": request_id, "jobs": jobs, "count": len(jobs)}))
-                log.info(f"[indeed] scrape done — {len(jobs)} jobs ({browser_choice})")
-            except IndeedCaptchaError as e:
-                log.warning(f"[indeed] captcha detected — stopping: {e}")
+    async def _handle_describe_jobs_indeed(self, ws, request_id: str, jobs: List[Dict]):
+        """Phase 2: visit each Indeed job URL and send back its description."""
+        ctx = await self._get_indeed_ctx(self.indeed_browser_type)
+        page = await ctx.new_page()
+        try:
+            for job in jobs:
+                url = job.get("url", "")
+                if not url:
+                    continue
                 try:
-                    await ws.send(json.dumps({"type": "scrape_error", "requestId": request_id, "error": str(e)}))
-                except Exception:
-                    pass
-            except Exception as e:
-                log.error(f"[indeed] scrape error: {e}")
-                try:
-                    await ws.send(json.dumps({"type": "scrape_error", "requestId": request_id, "error": str(e)}))
-                except Exception:
-                    pass
-            finally:
-                if persistent:
-                    # Firefox: keep one blank tab so the context stays alive for next scrape
-                    try:
-                        keeper = await ctx.new_page()
-                    except Exception:
-                        keeper = None
-                    for p in list(ctx.pages):
-                        if p is keeper:
-                            continue
+                    await page.goto(url, wait_until="domcontentloaded", timeout=25_000)
+                    await asyncio.sleep(1.0 + random.uniform(0, 0.6))
+
+                    # If Indeed shows a bot-wall, save an error message as the description
+                    if await _check_indeed_captcha(page):
+                        log.warning("[indeed] captcha detected during describe phase")
                         try:
-                            await p.close()
+                            await ws.send(json.dumps({
+                                "type": "description_update",
+                                "requestId": request_id,
+                                "url": url,
+                                "description": "⚠️ Description not available — Indeed blocked the request (Captcha/Cloudflare). Please open the link manually to view the full description.",
+                            }))
                         except Exception:
-                            pass
-                else:
-                    # Chrome CDP: close everything; next scrape reconnects fresh
-                    for p in list(ctx.pages):
+                            return
+                        continue
+
+                    desc = await page.evaluate(_INDEED_DESC_JS)
+                    if desc == '__CAPTCHA__':
+                        desc = '⚠️ Captcha detected — Indeed blocked the request. Description not available.'
+                    if desc and len(desc.strip()) > 10:
                         try:
-                            await p.close()
+                            await ws.send(json.dumps({
+                                "type": "description_update",
+                                "requestId": request_id,
+                                "url": url,
+                                "description": desc.strip(),
+                            }))
+
                         except Exception:
-                            pass
+                            return  # WS closed, stop
+                except Exception as e:
+                    log.warning(f"[indeed] desc fetch failed for {url}: {e!s:.80}")
+                await asyncio.sleep(0.6 + random.uniform(0, 0.5))
+        finally:
+            await page.close()
+        log.info(f"[indeed] Phase 2 enrichment done for {len(jobs)} jobs")
 
     async def _indeed_ws_loop(self):
         log.info(f"[indeed] connecting → {self.indeed_ws_url}")
@@ -1307,15 +1625,12 @@ class JobHawkAgent:
                         await ws.send(json.dumps({"type": "pong", "ts": msg.get("ts", 0)}))
                     elif t == "scrape_start":
                         asyncio.create_task(self._handle_indeed_scrape(ws, msg.get("requestId", ""), msg.get("params", {})))
+                    elif t == "describe_jobs":
+                        asyncio.create_task(self._handle_describe_jobs_indeed(ws, msg.get("requestId", ""), msg.get("jobs", [])))
             finally:
                 hb.cancel()
 
     async def _run_indeed(self):
-        # No browser setup at startup — browser is launched on first scrape.
-        # Chrome: per-scrape CDP connect (fresh context, no stale state).
-        # Firefox: lazy-init persistent profile (created on first Firefox scrape).
-        log.info("[indeed] ready — browser will launch on first scrape")
-
         while self.running:
             try:
                 await self._indeed_ws_loop()
@@ -1324,9 +1639,14 @@ class JobHawkAgent:
                 await asyncio.sleep(self._ind_reconnect + random.uniform(0, 1.5))
                 self._ind_reconnect = min(MAX_RECONNECT_DELAY, self._ind_reconnect * 2)
 
-        for ctx in filter(None, [self.indeed_firefox_ctx, self.indeed_webkit_ctx, self.indeed_chromium_ctx]):
+        if self.indeed_ctx:
             try:
-                await ctx.close()
+                await self.indeed_ctx.close()
+            except Exception:
+                pass
+        if self._patchright_pcm:
+            try:
+                await self._patchright_pcm.stop()
             except Exception:
                 pass
 
@@ -1342,20 +1662,12 @@ class JobHawkAgent:
     # ── Entry point ────────────────────────────────────────────────────────────
 
     async def run(self):
-        for d in [PROFILE_DIR, LINKEDIN_PROFILE, INDEED_CHROME_PROFILE,
-                  INDEED_FF_PROFILE, INDEED_WEBKIT_PROFILE, INDEED_CHROMIUM_PROFILE]:
+        for d in [PROFILE_DIR, LINKEDIN_PROFILE]:
             d.mkdir(parents=True, exist_ok=True)
 
         ext = _superpowers_path()
         if ext:
             log.info(f"✅  Superpowers extension loaded (LinkedIn/Chromium): {ext}")
-        if not _stealth_available:
-            print("\n💡  Tip: install playwright-stealth for better anti-bot protection:")
-            print("       pip install playwright-stealth")
-            print("   LinkedIn also supports the superpowers Chromium extension:")
-            print("       git clone https://github.com/obra/superpowers.git ~/.jobradar_agent/superpowers_ext")
-            print("   Indeed uses WebKit (Safari engine) — no extension needed.\n")
-
         await self._wake_backend()
 
         async with async_playwright() as p:
@@ -1371,11 +1683,6 @@ class JobHawkAgent:
 def main():
     parser = argparse.ArgumentParser(description="JobHawk Agent — LinkedIn + Indeed")
     parser.add_argument("--backend", help="Override backend URL")
-    parser.add_argument(
-        "--cdp-port", type=int, default=None, metavar="PORT",
-        help="Connect Indeed scraping to your real running Chrome via CDP (e.g. 9222). "
-             "Chrome must be launched with --remote-debugging-port=PORT.",
-    )
     args = parser.parse_args()
 
     backend_url = args.backend or os.environ.get("JOBRADAR_BACKEND_URL") or DEFAULT_BACKEND_URL
@@ -1386,11 +1693,7 @@ def main():
         print("or set JOBRADAR_BACKEND_URL env var.")
         sys.exit(1)
 
-    if args.cdp_port:
-        print(f"\n🔗  Indeed will use Chrome via CDP on port {args.cdp_port} (auto-launched if not running)")
-        print(f"   Profile: {INDEED_CHROME_PROFILE}\n")
-
-    agent = JobHawkAgent(backend_url, cdp_port=args.cdp_port)
+    agent = JobHawkAgent(backend_url)
 
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)

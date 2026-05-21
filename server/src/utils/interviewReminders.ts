@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import { sendMailViaSmtp } from './smtpSubmit'
 import { buildInterviewReminderMail } from './interviewReminderMail'
+import { getTomorrowInterviewReminderWindow } from './interviewReminderSchedule'
 import type { Job } from '../scrapers/types'
 
 function smtpConfigured(): boolean {
@@ -24,8 +25,7 @@ export async function sendInterviewReminderEmails(): Promise<void> {
   if (!smtpConfigured()) return
 
   const now = new Date()
-  const windowStart = new Date(now.getTime() + 22 * 60 * 60 * 1000)
-  const windowEnd = new Date(now.getTime() + 26 * 60 * 60 * 1000)
+  const { start: windowStart, end: windowEnd } = getTomorrowInterviewReminderWindow(now)
 
   const { data: rows, error } = await supabase
     .from('jobs')

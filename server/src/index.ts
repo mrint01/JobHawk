@@ -36,6 +36,7 @@ import {
   waitForIndeedAgentConnection,
 } from './utils/indeedAgentHub'
 import { sendInterviewReminderEmails } from './utils/interviewReminders'
+import { getNextDailyReminderRunAt } from './utils/interviewReminderSchedule'
 
 const PORT = Number(process.env.PORT ?? 3001)
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? 'http://localhost:5173')
@@ -169,10 +170,18 @@ app.get('/api/debug/screenshot/:filename', (req, res) => {
   }
 })
 
-// ── Interview email reminders (~every 15 min; requires SMTP_* env + migration 006) ─
-setInterval(() => {
-  void sendInterviewReminderEmails()
-}, 15 * 60 * 1000)
+// ── Interview email reminders — daily at 10:00, interviews tomorrow 07:00–18:00 ─
+function scheduleDailyInterviewReminders() {
+  const now = new Date()
+  const next = getNextDailyReminderRunAt(now)
+  const delay = next.getTime() - now.getTime()
+  console.log(`[interview-reminders] next check at ${next.toISOString()}`)
+  setTimeout(() => {
+    void sendInterviewReminderEmails()
+    scheduleDailyInterviewReminders()
+  }, delay)
+}
+scheduleDailyInterviewReminders()
 
 // ── LinkedIn session watchdog (every 30 min) ─────────────────────────────────
 setInterval(() => {
@@ -291,8 +300,6 @@ async function start() {
     (ws, raw) => handleIndeedAgentMessage(ws, raw),
     (ws) => unregisterIndeedAgent(ws),
   )
-
-  void sendInterviewReminderEmails()
 
   server.listen(PORT, () => {
     console.log(`✅  JobHawk API  →  http://localhost:${PORT}`)

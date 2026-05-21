@@ -132,7 +132,7 @@ function Pagination({
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const { newJobs, appliedJobs, pipelineJobs, scrapeProgress, isScraping, clearJobs, clearJobOffers, appState, isJobsLoading } = useApp()
+  const { newJobs, appliedJobs, activePipelineJobs, scrapeProgress, isScraping, clearJobs, clearJobOffers, appState, isJobsLoading } = useApp()
   const [activeTab, setActiveTab] = useState<Tab>('offers')
   const [offersPage, setOffersPage] = useState(1)
   const [appliedPage, setAppliedPage] = useState(1)
@@ -376,7 +376,7 @@ export default function Dashboard() {
         <StatCard label="Total Scraped" value={newJobs.length + appliedJobs.length} color="blue" />
         <StatCard label="Open Offers"   value={newJobs.length}                       color="violet" />
         <StatCard label="Applied"       value={appliedJobs.length}                   color="emerald" />
-        <StatCard label="In Pipeline"   value={pipelineJobs.length}                  color="blue" />
+        <StatCard label="In Pipeline"   value={activePipelineJobs.length}            color="blue" />
       </div>
 
       {/* Tabs */}

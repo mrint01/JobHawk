@@ -18,6 +18,9 @@ import {
 } from '../utils/jobStore'
 import { isAdmin, resolveUserId } from '../utils/userStore'
 import type { JobStatus } from '../scrapers/types'
+import { isAgentReady, sendDescribeJobs } from '../utils/linkedinAgentHub'
+import { isIndeedAgentReady, sendDescribeIndeedJobs } from '../utils/indeedAgentHub'
+import { enrichJobsBackground } from '../utils/descriptionEnricher'
 
 const router = Router()
 const ALLOWED_STATUSES = new Set([
@@ -43,7 +46,23 @@ router.delete('/offers', async (req: Request, res: Response) => {
 })
 
 router.patch('/:id/apply', async (req: Request, res: Response) => {
-  res.json(await markAppliedForUser(getUserId(req), String(req.params.id)))
+  const userId = getUserId(req)
+  const id = String(req.params.id)
+  const jobs = await markAppliedForUser(userId, id)
+
+  // Fetch description in the background for this newly-applied job
+  const job = jobs.find((j) => j.id === id)
+  if (job && !job.description) {
+    if (job.platform === 'linkedin' && isAgentReady()) {
+      sendDescribeJobs([{ url: job.url }], userId)
+    } else if (job.platform === 'indeed' && isIndeedAgentReady()) {
+      sendDescribeIndeedJobs([{ url: job.url }], userId)
+    } else {
+      enrichJobsBackground([{ id: job.id, url: job.url, platform: job.platform, userId }])
+    }
+  }
+
+  res.json(jobs)
 })
 
 router.patch('/:id/unapply', async (req: Request, res: Response) => {

@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Job, JobStatus, Platform } from '../types'
+import { ACTIVE_PIPELINE_STATUSES } from '../types'
 import { formatGermanDateTime } from '../time'
 
 const STATUS_OPTIONS: Array<{ value: JobStatus; label: string }> = [
@@ -75,6 +76,16 @@ function canonicalNotesPayload(raw?: string): string {
 /** Accepted / refused: no further interviews; reminders are not sent for these (server uses same rule). */
 function isTerminalPipelineStatus(status: JobStatus): boolean {
   return status === 'accepted' || status === 'refused'
+}
+
+const REFUSED_LOCK_MS = 5 * 60 * 1000
+
+function isRefusedStatusLocked(job: Job): boolean {
+  if (job.status !== 'refused') return false
+  const at = job.statusChangedAt
+  if (!at) return true
+  const elapsed = Date.now() - new Date(at).getTime()
+  return !Number.isNaN(elapsed) && elapsed >= REFUSED_LOCK_MS
 }
 
 function interviewTimelineCopy(interviewAt: string | undefined, stageLabel: string): { when: string | null; line: string } {
@@ -384,7 +395,8 @@ export default function InterviewPipelinePage() {
 
   const acceptedCount = filtered.filter((j) => j.status === 'accepted').length
   const refusedCount = filtered.filter((j) => j.status === 'refused').length
-  const hrCount = filtered.filter((j) => j.status === 'hr_interview').length
+  const totalInterviewCount = filtered.length
+  const activeInterviewCount = filtered.filter((j) => ACTIVE_PIPELINE_STATUSES.includes(j.status)).length
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 py-8 space-y-6">
@@ -395,14 +407,18 @@ export default function InterviewPipelinePage() {
         </div>
         <span className="badge bg-blue-100 text-blue-700 dark:bg-blue-500/15 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30">
           <CalendarRange className="w-3 h-3" />
-          {filtered.length} tracked jobs
+          {activeInterviewCount} tracked jobs
         </span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <div className="card p-4">
-          <p className="text-xs text-gray-500 dark:text-slate-400">HR Interview</p>
-          <p className="text-2xl font-bold text-blue-600 dark:text-blue-300 mt-1">{hrCount}</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400">Total Interview</p>
+          <p className="text-2xl font-bold text-blue-600 dark:text-blue-300 mt-1">{totalInterviewCount}</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-xs text-gray-500 dark:text-slate-400">Active Interviews</p>
+          <p className="text-2xl font-bold text-violet-600 dark:text-violet-300 mt-1">{activeInterviewCount}</p>
         </div>
         <div className="card p-4">
           <p className="text-xs text-gray-500 dark:text-slate-400">Accepted</p>
@@ -539,13 +555,15 @@ export default function InterviewPipelinePage() {
                         <span className={`badge border border-transparent min-w-[140px] justify-center text-center ${STATUS_META[job.status].tone}`}>
                           {STATUS_META[job.status].label}
                         </span>
-                        <select
-                          className="input text-xs h-8 py-1 px-2 flex-1 min-w-[160px] max-w-[200px]"
-                          value={job.status}
-                          onChange={(e) => updateJobStatus(job.id, e.target.value as JobStatus)}
-                        >
-                          {STATUS_OPTIONS.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
-                        </select>
+                        {!isRefusedStatusLocked(job) && (
+                          <select
+                            className="input text-xs h-8 py-1 px-2 flex-1 min-w-[160px] max-w-[200px]"
+                            value={job.status}
+                            onChange={(e) => updateJobStatus(job.id, e.target.value as JobStatus)}
+                          >
+                            {STATUS_OPTIONS.map((status) => <option key={status.value} value={status.value}>{status.label}</option>)}
+                          </select>
+                        )}
                       </div>
                     </td>
                   </tr>

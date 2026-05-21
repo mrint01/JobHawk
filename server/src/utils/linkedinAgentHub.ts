@@ -132,13 +132,14 @@ export function sendDescribeJobs(
   if (!agent || jobs.length === 0) return
   const requestId = nanoid()
   pendingEnrichments.set(requestId, userId)
-  setTimeout(() => pendingEnrichments.delete(requestId), 90 * 60_000) // 90-min TTL
+  setTimeout(() => pendingEnrichments.delete(requestId), 90 * 60_000)
   try {
     agent.ws.send(JSON.stringify({ type: 'describe_jobs', requestId, jobs }))
   } catch {
     pendingEnrichments.delete(requestId)
   }
 }
+
 
 export function handleAgentMessage(ws: WebSocket, raw: string) {
   if (!agent || agent.ws !== ws) return

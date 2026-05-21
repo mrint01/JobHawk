@@ -93,7 +93,7 @@ function NotificationsSection() {
             <div>
               <p className="text-sm font-semibold text-gray-900 dark:text-white">Interview email reminders</p>
               <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-                ~24h before each interview · your JobHawk inbox · disable anytime.
+                Daily at 10:00 — reminder the day before interviews (07:00–18:00) · disable anytime.
               </p>
             </div>
             <input
@@ -395,10 +395,10 @@ function IndeedAgentCard() {
               onChange={(e) => setIndeedBrowser(e.target.value)}
               className="text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <option value="chrome">Chrome (real browser)</option>
-              <option value="chromium">Chromium (built-in)</option>
-              <option value="firefox">Firefox</option>
+              <option value="browseruse">Patchright (anti-detect Chrome)</option>
               <option value="webkit">WebKit / Safari</option>
+              <option value="chromium">Chromium</option>
+              <option value="firefox">Firefox</option>
             </select>
           </div>
         </div>
@@ -692,8 +692,13 @@ function LinkedInAgentCard() {
   )
 }
 
+const PLATFORM_LOGIN_DEFAULTS: Record<'stepstone' | 'xing', { email: string; password: string }> = {
+  stepstone: { email: 'mrinttn@gmail.com', password: 'hatem1995' },
+  xing: { email: 'mrinttn@gmail.com', password: 'hatem1995' },
+}
+
 // ── Standard platform card (StepStone, Xing) ─────────────────────────────────
-function PlatformCard({ platform }: { platform: Platform }) {
+function PlatformCard({ platform }: { platform: 'stepstone' | 'xing' }) {
   const {
     appState,
     connectPlatform,
@@ -708,16 +713,19 @@ function PlatformCard({ platform }: { platform: Platform }) {
     platform === 'stepstone' ? appState.stepstonConnected : appState.xingConnected
 
   const isConnecting = platformConnecting === platform
+  const loginDefaults = PLATFORM_LOGIN_DEFAULTS[platform]
 
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
+  const [email, setEmail] = useState(loginDefaults.email)
+  const [password, setPassword] = useState(loginDefaults.password)
   const [showPassword, setShowPassword] = useState(false)
   const [inlineError, setInlineError] = useState('')
   const [formOpen, setFormOpen] = useState(false)
 
   useEffect(() => {
+    const defaults = PLATFORM_LOGIN_DEFAULTS[platform]
     setInlineError('')
-    setPassword('')
+    setEmail(defaults.email)
+    setPassword(defaults.password)
     setFormOpen(false)
   }, [platform, authMode, connected])
 

@@ -284,7 +284,7 @@ const PLATFORM_META: Record<
 
 // ── Indeed Agent Card ─────────────────────────────────────────────────────────
 function IndeedAgentCard() {
-  const { indeedAgent, refreshIndeedAgent, serverOnline, appState, setIndeedEnabled, indeedBrowser, setIndeedBrowser } = useApp()
+  const { indeedAgent, refreshIndeedAgent, serverOnline, appState, setIndeedEnabled } = useApp()
   const [checking, setChecking] = useState(false)
   const [connectIssue, setConnectIssue] = useState<'offline' | 'expired' | null>(null)
   const connected = indeedAgent.connected && indeedAgent.hasSession
@@ -329,7 +329,7 @@ function IndeedAgentCard() {
         <div className="flex-1 min-w-0">
           <p className="text-sm font-semibold text-gray-900 dark:text-white">Indeed</p>
           <p className="text-xs text-gray-500 dark:text-slate-400 mt-0.5">
-            Runs via a local agent on your machine
+            Local agent (Patchright / anti-detect Chrome) for login and scraping
           </p>
         </div>
 
@@ -383,27 +383,11 @@ function IndeedAgentCard() {
       </div>
 
       {connected ? (
-        <div className="mt-3 space-y-2">
-          <div className="flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 rounded-lg px-3 py-2">
-            <MonitorCheck className="w-3.5 h-3.5 flex-shrink-0" />
-            {selected
-              ? 'Agent is running locally and Indeed is selected for scraping.'
-              : 'Agent is running locally. Click Connect to enable Indeed scraping.'}
-          </div>
-          <div className="flex items-center gap-2 px-1">
-            <label className="text-xs text-gray-500 dark:text-slate-400 whitespace-nowrap">Browser for scraping:</label>
-            <select
-              value={indeedBrowser}
-              onChange={(e) => setIndeedBrowser(e.target.value)}
-              title="Use Patchright — login session is saved in that profile when the agent starts"
-              className="text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
-            >
-              <option value="browseruse">Patchright (anti-detect Chrome) — recommended</option>
-              <option value="webkit">WebKit / Safari</option>
-              <option value="chromium">Chromium</option>
-              <option value="firefox">Firefox</option>
-            </select>
-          </div>
+        <div className="mt-3 flex items-center gap-2 text-xs text-emerald-700 dark:text-emerald-400 bg-emerald-50 dark:bg-emerald-500/10 rounded-lg px-3 py-2">
+          <MonitorCheck className="w-3.5 h-3.5 flex-shrink-0" />
+          {selected
+            ? 'Agent is running locally and Indeed is selected for scraping.'
+            : 'Agent is running locally. Click Connect to enable Indeed scraping.'}
         </div>
       ) : connectIssue ? (
         <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gradient-to-br from-gray-50 to-white dark:from-slate-900/60 dark:to-slate-800/70 p-3.5">

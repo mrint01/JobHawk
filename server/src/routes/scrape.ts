@@ -24,7 +24,7 @@ function parsePlatforms(raw: string | undefined): Platform[] {
 
 type ScraperFn = (title: string, location: string, cb: ProgressCallback, userId: string) => Promise<ScrapedJob[]>
 
-function buildScrapers(platforms: Platform[], indeedBrowser?: string): Record<Platform, ScraperFn | null> {
+function buildScrapers(platforms: Platform[]): Record<Platform, ScraperFn | null> {
   const linkedinFn: ScraperFn | null = platforms.includes('linkedin')
     ? (title, location, cb) => {
         if (!isAgentReady()) {
@@ -49,7 +49,7 @@ function buildScrapers(platforms: Platform[], indeedBrowser?: string): Record<Pl
           return Promise.resolve([])
         }
         return dispatchIndeedScrapeToAgent(
-          { keywords: title, location, maxJobs: SCRAPE_JOBS_PER_PLATFORM_LIMIT, browser: indeedBrowser },
+          { keywords: title, location, maxJobs: SCRAPE_JOBS_PER_PLATFORM_LIMIT },
           cb,
         )
       }
@@ -66,11 +66,10 @@ function buildScrapers(platforms: Platform[], indeedBrowser?: string): Record<Pl
 
 router.post('/', async (req: Request, res: Response) => {
   const userId = getUserId(req)
-  const { jobTitle, location = '', platforms: rawPlatforms, indeedBrowser } = req.body as {
+  const { jobTitle, location = '', platforms: rawPlatforms } = req.body as {
     jobTitle?: string
     location?: string
     platforms?: string
-    indeedBrowser?: string
   }
 
   if (!jobTitle?.trim()) {
@@ -79,7 +78,7 @@ router.post('/', async (req: Request, res: Response) => {
   }
 
   const platforms = parsePlatforms(rawPlatforms)
-  const scrapers = buildScrapers(platforms, indeedBrowser)
+  const scrapers = buildScrapers(platforms)
   const events: ScrapeEvent[] = []
   const allJobs: ScrapedJob[] = []
 
@@ -111,11 +110,10 @@ router.post('/', async (req: Request, res: Response) => {
 
 router.get('/stream', (req: Request, res: Response) => {
   const userId = getUserId(req)
-  const { jobTitle, location = '', platforms: rawPlatforms, indeedBrowser } = req.query as {
+  const { jobTitle, location = '', platforms: rawPlatforms } = req.query as {
     jobTitle?: string
     location?: string
     platforms?: string
-    indeedBrowser?: string
   }
 
   if (!jobTitle?.trim()) {
@@ -133,7 +131,7 @@ router.get('/stream', (req: Request, res: Response) => {
   }
 
   const platforms = parsePlatforms(rawPlatforms)
-  const scrapers = buildScrapers(platforms, indeedBrowser)
+  const scrapers = buildScrapers(platforms)
   const allJobs: ScrapedJob[] = []
 
   ;(async () => {

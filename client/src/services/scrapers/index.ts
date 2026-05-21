@@ -83,7 +83,6 @@ export function scrapeAll(
       location: params.location,
       platforms: platforms.join(','),
     }
-    if (params.indeedBrowser) qsObj.indeedBrowser = params.indeedBrowser
     const qs = new URLSearchParams(qsObj)
     const url = `${API_BASE}/api/scrape/stream?${qs}`
 

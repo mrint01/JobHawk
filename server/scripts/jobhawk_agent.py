@@ -6,8 +6,7 @@ Connects to the JobHawk backend via two WebSocket channels and handles
 scrape requests for both platforms simultaneously.
 
   LinkedIn: requires login (persistent Chromium profile)
-  Indeed:   requires login (persistent browser profile — default Patchright/Chromium)
-            Session is checked at agent startup; scraping uses the saved profile.
+  Indeed:   requires login via Patchright (browseruse) — same browser for login and scraping.
             Stops immediately if "Zusätzliche Verifizierung erforderlich" captcha is detected.
 
 Run:
@@ -106,8 +105,8 @@ MAX_JOBS                 = 100
 
 INDEED_BASE = "https://de.indeed.com"
 INDEED_LOGIN_URL = "https://secure.indeed.com/auth"
-# Browser profile used for Indeed login + session (must match scraping browser for cookies).
-INDEED_LOGIN_BROWSER = os.environ.get("INDEED_LOGIN_BROWSER", "browseruse").strip().lower()
+# Indeed always uses Patchright (browseruse) — same profile for login and scraping.
+INDEED_BROWSER = "browseruse"
 CONTRACT_TOKENS_DE = [
     "Vollzeit", "Teilzeit", "Praktikum", "Werkstudent", "Trainee",
     "Aushilfe", "Minijob", "Befristet", "Unbefristet", "Festanstellung",
@@ -1204,7 +1203,7 @@ class JobHawkAgent:
         self.playwright = None
         self.linkedin_ctx: Optional[BrowserContext] = None
         self.indeed_ctx:   Optional[BrowserContext] = None
-        self.indeed_browser_type: str = "webkit"  # set on first scrape
+        self.indeed_browser_type: str = INDEED_BROWSER
         self._patchright_pcm = None  # patchright context manager (kept alive when browseruse mode)
 
         self.linkedin_has_session = False
@@ -1324,14 +1323,27 @@ class JobHawkAgent:
         await ctx.add_init_script(_WEBKIT_INIT_SCRIPT)
         return ctx
 
-    async def _get_indeed_ctx(self, browser_type: str) -> BrowserContext:
-        """Return the persistent Indeed context, creating it on first call."""
+    async def _close_indeed_ctx(self) -> None:
+        if self.indeed_ctx:
+            try:
+                await self.indeed_ctx.close()
+            except Exception:
+                pass
+            self.indeed_ctx = None
+        if self._patchright_pcm:
+            try:
+                await self._patchright_pcm.stop()
+            except Exception:
+                pass
+            self._patchright_pcm = None
+
+    async def _get_indeed_ctx(self) -> BrowserContext:
+        """Return the persistent Patchright Indeed context (login + scrape share one profile)."""
         if self.indeed_ctx is None:
-            self.indeed_browser_type = browser_type
-            label = "patchright (anti-detect Chrome)" if browser_type == "browseruse" else browser_type
-            log.info(f"[indeed] launching {label}…")
-            self.indeed_ctx = await self._open_indeed_ctx(browser_type)
-            log.info(f"[indeed] ✅ {browser_type} ready")
+            log.info("[indeed] launching patchright (anti-detect Chrome)…")
+            self.indeed_ctx = await self._open_indeed_ctx(INDEED_BROWSER)
+            self.indeed_browser_type = INDEED_BROWSER
+            log.info("[indeed] ✅ patchright ready — same browser for login and scrape")
         return self.indeed_ctx
 
     # ── Indeed auth ────────────────────────────────────────────────────────────
@@ -1368,7 +1380,7 @@ class JobHawkAgent:
     async def _indeed_setup(self):
         print("\n=== Indeed Login Setup ===")
         print("A browser window will open. Please log in to Indeed (de.indeed.com).")
-        print(f"Profile: {INDEED_LOGIN_BROWSER} — use the same browser in Settings for scraping.")
+        print("Uses Patchright (anti-detect Chrome) — same browser for login and scraping.")
         print("After you are logged in, press Enter here.\n")
         page = await self.indeed_ctx.new_page()
         try:
@@ -1576,14 +1588,7 @@ class JobHawkAgent:
                 pass
             return
 
-        browser = str(params.get("browser", INDEED_LOGIN_BROWSER)).lower()
-        if browser != self.indeed_browser_type:
-            log.warning(
-                f"[indeed] scrape browser={browser} differs from login profile={self.indeed_browser_type}; "
-                f"using login profile for session cookies",
-            )
-            browser = self.indeed_browser_type
-        ctx = await self._get_indeed_ctx(browser)
+        ctx = await self._get_indeed_ctx()
         page = await ctx.new_page()
         try:
             async def progress(pct: int):
@@ -1624,7 +1629,7 @@ class JobHawkAgent:
         if not self.indeed_has_session:
             log.warning("[indeed] describe_jobs skipped — no session")
             return
-        ctx = await self._get_indeed_ctx(self.indeed_browser_type)
+        ctx = await self._get_indeed_ctx()
         page = await ctx.new_page()
         try:
             for job in jobs:
@@ -1718,15 +1723,10 @@ class JobHawkAgent:
                 hb.cancel()
 
     async def _run_indeed(self):
-        login_browser = INDEED_LOGIN_BROWSER
-        if login_browser not in ("browseruse", "webkit", "chromium", "firefox"):
-            log.warning(f"[indeed] unknown INDEED_LOGIN_BROWSER={login_browser!r}, using browseruse")
-            login_browser = "browseruse"
-
-        log.info(f"[indeed] launching {login_browser} for login/session…")
-        self.indeed_ctx = await self._open_indeed_ctx(login_browser)
-        self.indeed_browser_type = login_browser
-        log.info(f"[indeed] ✅ {login_browser} ready")
+        log.info("[indeed] launching patchright for login + scrape (single browser profile)…")
+        self.indeed_ctx = await self._open_indeed_ctx(INDEED_BROWSER)
+        self.indeed_browser_type = INDEED_BROWSER
+        log.info("[indeed] ✅ patchright ready")
 
         log.info("[indeed] checking session…")
         if not await self._indeed_logged_in():
@@ -1734,15 +1734,11 @@ class JobHawkAgent:
             await self._indeed_setup()
             if not await self._indeed_logged_in():
                 print("\n❌  Indeed login incomplete. Re-run the script and log in.")
-                try:
-                    await self.indeed_ctx.close()
-                except Exception:
-                    pass
-                self.indeed_ctx = None
+                await self._close_indeed_ctx()
                 return
 
         self.indeed_has_session = True
-        log.info("[indeed] ✅ session active — entering WS loop")
+        log.info("[indeed] ✅ session active — entering WS loop (keeps patchright open for scrape)")
 
         while self.running:
             try:
@@ -1752,16 +1748,7 @@ class JobHawkAgent:
                 await asyncio.sleep(self._ind_reconnect + random.uniform(0, 1.5))
                 self._ind_reconnect = min(MAX_RECONNECT_DELAY, self._ind_reconnect * 2)
 
-        if self.indeed_ctx:
-            try:
-                await self.indeed_ctx.close()
-            except Exception:
-                pass
-        if self._patchright_pcm:
-            try:
-                await self._patchright_pcm.stop()
-            except Exception:
-                pass
+        await self._close_indeed_ctx()
 
     # ── Wake backend ───────────────────────────────────────────────────────────
 

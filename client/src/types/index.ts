@@ -50,7 +50,6 @@ export interface Job {
 export interface ScrapeParams {
   jobTitle: string
   location: string
-  indeedBrowser?: string
 }
 
 export type PlatformStatus = 'idle' | 'pending' | 'running' | 'done' | 'error'

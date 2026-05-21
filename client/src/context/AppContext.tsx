@@ -57,8 +57,6 @@ interface AppContextValue {
   indeedAgent: IndeedAgentStatus
   refreshIndeedAgent: (forceCheck?: boolean) => Promise<IndeedAgentStatus>
   setIndeedEnabled: (enabled: boolean) => void
-  indeedBrowser: string
-  setIndeedBrowser: (b: string) => void
   jobs: Job[]
   newJobs: Job[]
   appliedJobs: Job[]
@@ -95,9 +93,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [platformConnecting, setPlatformConnecting] = useState<Platform | null>(null)
   const [linkedinAgent, setLinkedinAgent] = useState<LinkedInAgentStatus>({ connected: false, hasSession: false, username: '' })
   const [indeedAgent, setIndeedAgent] = useState<IndeedAgentStatus>({ connected: false, hasSession: false })
-  const [indeedBrowser, setIndeedBrowser] = useState<string>(
-    () => localStorage.getItem('indeedBrowser') ?? 'browseruse',
-  )
   const jobsLoadedRef = useRef(false)
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), [])
@@ -205,11 +200,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
 
   const setIndeedEnabled = useCallback((enabled: boolean) => {
     setAppState((s) => ({ ...s, indeedConnected: enabled }))
-  }, [])
-
-  const handleSetIndeedBrowser = useCallback((b: string) => {
-    setIndeedBrowser(b)
-    localStorage.setItem('indeedBrowser', b)
   }, [])
 
   const login = useCallback(async (usernameOrEmail: string, password: string) => {
@@ -371,7 +361,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setScrapeProgress({ isRunning: true, overall: 0, estimatedSecondsLeft: 15, platforms: [], startedAt: Date.now() })
     const shownPlatformErrors = new Set<string>()
     try {
-      await scrapeAll({ ...params, indeedBrowser }, connectedPlatforms, appState.userId, (p) => {
+      await scrapeAll(params, connectedPlatforms, appState.userId, (p) => {
         setScrapeProgress(p)
         for (const platformProgress of p.platforms) {
           if (platformProgress.status !== 'error' || !platformProgress.error) continue
@@ -398,7 +388,6 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       connectPlatform, disconnectPlatform, connectedPlatforms, platformConnecting,
       linkedinAgent, refreshLinkedInAgent, setLinkedInEnabled,
       indeedAgent, refreshIndeedAgent, setIndeedEnabled,
-      indeedBrowser, setIndeedBrowser: handleSetIndeedBrowser,
       jobs, newJobs, appliedJobs, pipelineJobs, activePipelineJobs, isJobsLoading, markApplied, markUnapplied, updateJobStatus, updateJobInterview, deleteJob, clearJobs, clearJobOffers,
       scrapeProgress, isScraping, startScrape, toasts, addToast, removeToast,
     }}>

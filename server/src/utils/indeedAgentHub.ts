@@ -99,7 +99,7 @@ export async function waitForIndeedAgentConnection(timeoutMs = 20_000, pollMs = 
 }
 
 export function dispatchIndeedScrapeToAgent(
-  params: { keywords: string; location: string; maxJobs: number; browser?: string },
+  params: { keywords: string; location: string; maxJobs: number },
   onProgress: ProgressCallback,
 ): Promise<ScrapedJob[]> {
   if (!agent || !agent.hasSession) {

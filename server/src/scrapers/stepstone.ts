@@ -25,7 +25,7 @@ function toStepStoneSlug(value: string, separator: '-' | '_'): string {
 }
 
 /** Rolling window: only jobs from the last N days (StepStone facet + our post-filter). */
-const STEPSTONE_MAX_AGE_DAYS = 7
+const STEPSTONE_MAX_AGE_DAYS = 1
 
 function buildStepStoneSearchUrl(jobTitle: string, location: string): string {
   const titleSlug = toStepStoneSlug(jobTitle, '-')
@@ -33,12 +33,13 @@ function buildStepStoneSearchUrl(jobTitle: string, location: string): string {
   const path = locationSlug
     ? `/jobs/${titleSlug}/in-${locationSlug}`
     : `/jobs/${titleSlug}`
-  // Match the working UI URL: sort=2 (newest), action=sort_publish, ag=age_7 (last 7 days facet)
+  // Match the working UI URL: sort=2 (newest), action=sort_publish, bage/ag=age_1 (last 24h facet)
   const params = new URLSearchParams({
     radius: '30',
     sort: '2',
     action: 'sort_publish',
-    ag: 'age_7',
+    bage: 'age_1',
+    ag: 'age_1',
     searchOrigin: 'Resultlist_top-search',
   })
   return `https://www.stepstone.de${path}?${params.toString()}`

@@ -8,7 +8,7 @@ import { closeScrapeBrowser } from '../utils/browser'
 import { mergeJobsForUser } from '../utils/jobStore'
 import { resolveUserId } from '../utils/userStore'
 import { isAgentReady, dispatchScrapeToAgent } from '../utils/linkedinAgentHub'
-import { isIndeedAgentReady, dispatchIndeedScrapeToAgent } from '../utils/indeedAgentHub'
+import { isIndeedAgentReady, dispatchIndeedScrapeToAgent, getIndeedAgentStatus } from '../utils/indeedAgentHub'
 
 const router = Router()
 
@@ -38,7 +38,14 @@ function buildScrapers(platforms: Platform[], indeedBrowser?: string): Record<Pl
   const indeedFn: ScraperFn | null = platforms.includes('indeed')
     ? (title, location, cb) => {
         if (!isIndeedAgentReady()) {
-          cb({ type: 'error', platform: 'indeed', error: 'Indeed agent is not connected. Run jobhawk_agent.py locally, then enable Indeed in Settings.' })
+          const st = getIndeedAgentStatus()
+          cb({
+            type: 'error',
+            platform: 'indeed',
+            error: !st.connected
+              ? 'Indeed agent is not connected. Run jobhawk_agent.py locally, then enable Indeed in Settings.'
+              : 'Indeed agent is not logged in. Restart jobhawk_agent.py and log in to Indeed when prompted.',
+          })
           return Promise.resolve([])
         }
         return dispatchIndeedScrapeToAgent(

@@ -5,6 +5,7 @@ import { updateJobDescriptionByUrl } from './jobStore'
 
 interface IndeedAgentConnection {
   ws: WebSocket
+  hasSession: boolean
   connectedAt: Date
   lastSeen: Date
   version: string
@@ -16,22 +17,34 @@ interface PendingScrape {
   timer: ReturnType<typeof setTimeout>
 }
 
+interface PendingSessionCheck {
+  resolve: (status: IndeedAgentStatus) => void
+  timer: ReturnType<typeof setTimeout>
+}
+
 let agent: IndeedAgentConnection | null = null
 const pendingScrapes = new Map<string, PendingScrape>()
 const pendingEnrichments = new Map<string, string>() // requestId → userId
+let pendingSessionCheck: PendingSessionCheck | null = null
 
 export interface IndeedAgentStatus {
   connected: boolean
+  hasSession: boolean
 }
 
-export function registerIndeedAgent(ws: WebSocket, version: string) {
-  agent = { ws, connectedAt: new Date(), lastSeen: new Date(), version }
-  console.log(`[indeed-agent] connected v=${version}`)
+export function registerIndeedAgent(ws: WebSocket, hasSession: boolean, version: string) {
+  agent = { ws, hasSession, connectedAt: new Date(), lastSeen: new Date(), version }
+  console.log(`[indeed-agent] connected: hasSession=${hasSession} v=${version}`)
 }
 
 export function unregisterIndeedAgent(ws?: WebSocket) {
   if (ws && agent && agent.ws !== ws) return
   agent = null
+  if (pendingSessionCheck) {
+    clearTimeout(pendingSessionCheck.timer)
+    pendingSessionCheck.resolve({ connected: false, hasSession: false })
+    pendingSessionCheck = null
+  }
   for (const [reqId, pending] of pendingScrapes) {
     clearTimeout(pending.timer)
     pending.onProgress({ type: 'error', platform: 'indeed', error: 'Indeed agent disconnected during scrape.' })
@@ -42,31 +55,60 @@ export function unregisterIndeedAgent(ws?: WebSocket) {
 }
 
 export function getIndeedAgentStatus(): IndeedAgentStatus {
-  return { connected: !!agent }
+  if (!agent) return { connected: false, hasSession: false }
+  return { connected: true, hasSession: agent.hasSession }
 }
 
 export function isIndeedAgentReady(): boolean {
-  return !!agent
+  return !!(agent && agent.hasSession)
+}
+
+export function requestIndeedAgentSessionCheck(timeoutMs = 8_000): Promise<IndeedAgentStatus> {
+  if (!agent) return Promise.resolve({ connected: false, hasSession: false })
+
+  if (pendingSessionCheck) {
+    clearTimeout(pendingSessionCheck.timer)
+    pendingSessionCheck.resolve(getIndeedAgentStatus())
+    pendingSessionCheck = null
+  }
+
+  return new Promise<IndeedAgentStatus>((resolve) => {
+    const timer = setTimeout(() => {
+      pendingSessionCheck = null
+      resolve(getIndeedAgentStatus())
+    }, timeoutMs)
+
+    pendingSessionCheck = { resolve, timer }
+    try {
+      agent!.ws.send(JSON.stringify({ type: 'check_session' }))
+    } catch {
+      clearTimeout(timer)
+      pendingSessionCheck = null
+      resolve(getIndeedAgentStatus())
+    }
+  })
 }
 
 export async function waitForIndeedAgentConnection(timeoutMs = 20_000, pollMs = 1_000): Promise<IndeedAgentStatus> {
   const started = Date.now()
   while (Date.now() - started < timeoutMs) {
-    if (agent) return { connected: true }
+    if (agent) return getIndeedAgentStatus()
     await new Promise<void>((resolve) => setTimeout(resolve, pollMs))
   }
-  return { connected: !!agent }
+  return getIndeedAgentStatus()
 }
 
 export function dispatchIndeedScrapeToAgent(
   params: { keywords: string; location: string; maxJobs: number; browser?: string },
   onProgress: ProgressCallback,
 ): Promise<ScrapedJob[]> {
-  if (!agent) {
+  if (!agent || !agent.hasSession) {
     onProgress({
       type: 'error',
       platform: 'indeed',
-      error: 'Indeed agent not connected. Run jobhawk_agent.py locally, then enable Indeed in Settings.',
+      error: agent
+        ? 'Indeed agent is connected but not logged in. Restart jobhawk_agent.py and log in to Indeed.'
+        : 'Indeed agent not connected. Run jobhawk_agent.py locally, then enable Indeed in Settings.',
     })
     return Promise.resolve([])
   }
@@ -87,7 +129,7 @@ export function dispatchIndeedScrapeToAgent(
 }
 
 export function sendDescribeIndeedJobs(jobs: { url: string }[], userId: string): void {
-  if (!agent) return
+  if (!agent || !agent.hasSession) return
   const requestId = nanoid()
   pendingEnrichments.set(requestId, userId)
   agent.ws.send(JSON.stringify({
@@ -108,6 +150,15 @@ export function handleIndeedAgentMessage(ws: WebSocket, raw: string) {
 
   switch (data.type) {
     case 'pong':
+      break
+
+    case 'session_status':
+      if (agent) agent.hasSession = Boolean(data.hasSession)
+      if (pendingSessionCheck) {
+        clearTimeout(pendingSessionCheck.timer)
+        pendingSessionCheck.resolve(getIndeedAgentStatus())
+        pendingSessionCheck = null
+      }
       break
 
     case 'scrape_progress': {

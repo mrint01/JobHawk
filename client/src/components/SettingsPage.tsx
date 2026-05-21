@@ -268,7 +268,7 @@ const PLATFORM_META: Record<
   },
   indeed: {
     label: 'Indeed',
-    description: 'German Indeed — public listings only; no login.',
+    description: 'German Indeed — requires login via the local agent.',
     icon: 'Id',
     color: '#2164f3',
     needsAuth: false,
@@ -286,19 +286,21 @@ const PLATFORM_META: Record<
 function IndeedAgentCard() {
   const { indeedAgent, refreshIndeedAgent, serverOnline, appState, setIndeedEnabled, indeedBrowser, setIndeedBrowser } = useApp()
   const [checking, setChecking] = useState(false)
-  const [offline, setOffline] = useState(false)
-  const connected = indeedAgent.connected
+  const [connectIssue, setConnectIssue] = useState<'offline' | 'expired' | null>(null)
+  const connected = indeedAgent.connected && indeedAgent.hasSession
   const selected = appState.indeedConnected
 
   async function handleConnectCheck() {
     setChecking(true)
     try {
       const status = await refreshIndeedAgent(true)
-      if (status.connected) {
-        setOffline(false)
+      if (status.connected && status.hasSession) {
+        setConnectIssue(null)
         setIndeedEnabled(true)
+      } else if (!status.connected) {
+        setConnectIssue('offline')
       } else {
-        setOffline(true)
+        setConnectIssue('expired')
       }
     } finally {
       setChecking(false)
@@ -393,23 +395,26 @@ function IndeedAgentCard() {
             <select
               value={indeedBrowser}
               onChange={(e) => setIndeedBrowser(e.target.value)}
+              title="Use Patchright — login session is saved in that profile when the agent starts"
               className="text-xs rounded-lg border border-gray-200 dark:border-slate-600 bg-white dark:bg-slate-800 text-gray-800 dark:text-slate-200 px-2 py-1 focus:outline-none focus:ring-1 focus:ring-blue-500"
             >
-              <option value="browseruse">Patchright (anti-detect Chrome)</option>
+              <option value="browseruse">Patchright (anti-detect Chrome) — recommended</option>
               <option value="webkit">WebKit / Safari</option>
               <option value="chromium">Chromium</option>
               <option value="firefox">Firefox</option>
             </select>
           </div>
         </div>
-      ) : offline ? (
+      ) : connectIssue ? (
         <div className="mt-3 rounded-xl border border-gray-200 dark:border-slate-700 bg-gradient-to-br from-gray-50 to-white dark:from-slate-900/60 dark:to-slate-800/70 p-3.5">
           <div className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 bg-amber-50 text-amber-700 dark:bg-amber-500/10 dark:text-amber-300">
             <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide">Agent Status</p>
               <p className="text-xs mt-0.5 leading-relaxed">
-                Indeed agent script is not running. Start it locally, then click Connect again.
+                {connectIssue === 'offline'
+                  ? 'Indeed agent script is not running. Start it locally, then click Connect again.'
+                  : 'Indeed agent is running but not logged in. Restart jobhawk_agent.py and log in to Indeed when prompted.'}
               </p>
             </div>
           </div>
@@ -427,7 +432,7 @@ function IndeedAgentCard() {
               </div>
               <div className="flex items-center gap-2 text-xs text-gray-700 dark:text-slate-200">
                 <span className="w-5 h-5 rounded-full flex items-center justify-center text-[11px] font-semibold text-white" style={{ backgroundColor: '#2164f3' }}>3</span>
-                <span>No login needed — Indeed scrapes public listings automatically.</span>
+                <span>Log in to Indeed in the browser window when prompted.</span>
               </div>
             </div>
           </div>

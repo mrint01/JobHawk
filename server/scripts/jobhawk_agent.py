@@ -6,7 +6,8 @@ Connects to the JobHawk backend via two WebSocket channels and handles
 scrape requests for both platforms simultaneously.
 
   LinkedIn: requires login (persistent Chromium profile)
-  Indeed:   public listings only — no login needed (persistent WebKit/Safari profile)
+  Indeed:   requires login (persistent browser profile — default Patchright/Chromium)
+            Session is checked at agent startup; scraping uses the saved profile.
             Stops immediately if "Zusätzliche Verifizierung erforderlich" captcha is detected.
 
 Run:
@@ -88,7 +89,7 @@ INDEED_WEBKIT_PROFILE   = PROFILE_DIR / "webkit_profile_indeed"
 INDEED_CHROMIUM_PROFILE = PROFILE_DIR / "chromium_profile_indeed"
 
 # Baked in at download time; override via env var or --backend flag.
-DEFAULT_BACKEND_URL = "https://jobhawk-production.up.railway.app"
+DEFAULT_BACKEND_URL = "http://localhost:3001"
 # DEFAULT_BACKEND_URL = "http://localhost:3001"
 # DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-production.up.railway.app"
 # Set to False to see the browser window (useful for debugging captchas).
@@ -104,6 +105,9 @@ WS_PING_TIMEOUT_SECONDS  = 20
 MAX_JOBS                 = 100
 
 INDEED_BASE = "https://de.indeed.com"
+INDEED_LOGIN_URL = "https://secure.indeed.com/auth"
+# Browser profile used for Indeed login + session (must match scraping browser for cookies).
+INDEED_LOGIN_BROWSER = os.environ.get("INDEED_LOGIN_BROWSER", "browseruse").strip().lower()
 CONTRACT_TOKENS_DE = [
     "Vollzeit", "Teilzeit", "Praktikum", "Werkstudent", "Trainee",
     "Aushilfe", "Minijob", "Befristet", "Unbefristet", "Festanstellung",
@@ -1204,6 +1208,7 @@ class JobHawkAgent:
         self._patchright_pcm = None  # patchright context manager (kept alive when browseruse mode)
 
         self.linkedin_has_session = False
+        self.indeed_has_session = False
         self.running = True
         self._li_reconnect  = RECONNECT_DELAY
         self._ind_reconnect = RECONNECT_DELAY
@@ -1328,6 +1333,59 @@ class JobHawkAgent:
             self.indeed_ctx = await self._open_indeed_ctx(browser_type)
             log.info(f"[indeed] ✅ {browser_type} ready")
         return self.indeed_ctx
+
+    # ── Indeed auth ────────────────────────────────────────────────────────────
+
+    async def _indeed_logged_in(self) -> bool:
+        if not self.indeed_ctx:
+            return False
+        page = await self.indeed_ctx.new_page()
+        try:
+            await page.goto(INDEED_BASE + "/", wait_until="domcontentloaded", timeout=25_000)
+            await asyncio.sleep(1.2)
+            if await _check_indeed_captcha(page):
+                log.warning("[indeed] captcha/bot wall during session check")
+                return False
+            return await page.evaluate("""() => {
+                const url = location.href.toLowerCase();
+                if (url.includes('secure.indeed.com/auth') || url.includes('/account/login')) return false;
+                const body = (document.body?.innerText || '').toLowerCase();
+                if (body.includes('abmelden') || body.includes('sign out') || body.includes('mein konto')) return true;
+                const accountLink = document.querySelector(
+                    'a[href*="account"], a[href*="profile"], [data-gnav-element-name="Account"]'
+                );
+                if (accountLink) return true;
+                const signIn = document.querySelector('a[href*="auth"], a[href*="login"]');
+                if (signIn && (signIn.innerText || '').toLowerCase().includes('anmelden')) return false;
+                return !url.includes('/auth');
+            }""")
+        except Exception as e:
+            log.warning(f"[indeed] session check failed: {e!s:.120}")
+            return False
+        finally:
+            await page.close()
+
+    async def _indeed_setup(self):
+        print("\n=== Indeed Login Setup ===")
+        print("A browser window will open. Please log in to Indeed (de.indeed.com).")
+        print(f"Profile: {INDEED_LOGIN_BROWSER} — use the same browser in Settings for scraping.")
+        print("After you are logged in, press Enter here.\n")
+        page = await self.indeed_ctx.new_page()
+        try:
+            await page.goto(INDEED_LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
+            await _dismiss_indeed_consent(page)
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, lambda: input("Press Enter after you have logged in to Indeed...\n"))
+            await page.goto(INDEED_BASE + "/", wait_until="domcontentloaded", timeout=20_000)
+            await asyncio.sleep(1.0)
+            if await self._indeed_logged_in():
+                print("\n✅  Indeed login successful! Profile saved.")
+            else:
+                print("\n⚠️  Could not verify Indeed login, but profile is saved. Try running again.")
+        except Exception as e:
+            print(f"\n⚠️  Navigation check failed ({e}), but profile is saved.")
+        finally:
+            await page.close()
 
     # ── LinkedIn auth ──────────────────────────────────────────────────────────
 
@@ -1507,7 +1565,24 @@ class JobHawkAgent:
     # ── Indeed WS ─────────────────────────────────────────────────────────────
 
     async def _handle_indeed_scrape(self, ws, request_id: str, params: dict):
-        browser = str(params.get("browser", "webkit")).lower()
+        if not self.indeed_has_session:
+            try:
+                await ws.send(json.dumps({
+                    "type": "scrape_error",
+                    "requestId": request_id,
+                    "error": "Indeed is not logged in. Restart jobhawk_agent.py and log in to Indeed when prompted.",
+                }))
+            except Exception:
+                pass
+            return
+
+        browser = str(params.get("browser", INDEED_LOGIN_BROWSER)).lower()
+        if browser != self.indeed_browser_type:
+            log.warning(
+                f"[indeed] scrape browser={browser} differs from login profile={self.indeed_browser_type}; "
+                f"using login profile for session cookies",
+            )
+            browser = self.indeed_browser_type
         ctx = await self._get_indeed_ctx(browser)
         page = await ctx.new_page()
         try:
@@ -1546,6 +1621,9 @@ class JobHawkAgent:
 
     async def _handle_describe_jobs_indeed(self, ws, request_id: str, jobs: List[Dict]):
         """Phase 2: visit each Indeed job URL and send back its description."""
+        if not self.indeed_has_session:
+            log.warning("[indeed] describe_jobs skipped — no session")
+            return
         ctx = await self._get_indeed_ctx(self.indeed_browser_type)
         page = await ctx.new_page()
         try:
@@ -1603,7 +1681,12 @@ class JobHawkAgent:
         ) as ws:
             log.info("[indeed] ✅ connected")
             self._ind_reconnect = RECONNECT_DELAY
-            await ws.send(json.dumps({"type": "hello", "platform": "indeed", "version": VERSION}))
+            await ws.send(json.dumps({
+                "type": "hello",
+                "platform": "indeed",
+                "hasSession": self.indeed_has_session,
+                "version": VERSION,
+            }))
 
             async def heartbeat():
                 while self.running:
@@ -1627,10 +1710,40 @@ class JobHawkAgent:
                         asyncio.create_task(self._handle_indeed_scrape(ws, msg.get("requestId", ""), msg.get("params", {})))
                     elif t == "describe_jobs":
                         asyncio.create_task(self._handle_describe_jobs_indeed(ws, msg.get("requestId", ""), msg.get("jobs", [])))
+                    elif t == "check_session":
+                        ok = await self._indeed_logged_in()
+                        self.indeed_has_session = ok
+                        await ws.send(json.dumps({"type": "session_status", "hasSession": ok}))
             finally:
                 hb.cancel()
 
     async def _run_indeed(self):
+        login_browser = INDEED_LOGIN_BROWSER
+        if login_browser not in ("browseruse", "webkit", "chromium", "firefox"):
+            log.warning(f"[indeed] unknown INDEED_LOGIN_BROWSER={login_browser!r}, using browseruse")
+            login_browser = "browseruse"
+
+        log.info(f"[indeed] launching {login_browser} for login/session…")
+        self.indeed_ctx = await self._open_indeed_ctx(login_browser)
+        self.indeed_browser_type = login_browser
+        log.info(f"[indeed] ✅ {login_browser} ready")
+
+        log.info("[indeed] checking session…")
+        if not await self._indeed_logged_in():
+            print("\n⚠️  No active Indeed session.")
+            await self._indeed_setup()
+            if not await self._indeed_logged_in():
+                print("\n❌  Indeed login incomplete. Re-run the script and log in.")
+                try:
+                    await self.indeed_ctx.close()
+                except Exception:
+                    pass
+                self.indeed_ctx = None
+                return
+
+        self.indeed_has_session = True
+        log.info("[indeed] ✅ session active — entering WS loop")
+
         while self.running:
             try:
                 await self._indeed_ws_loop()
@@ -1662,7 +1775,13 @@ class JobHawkAgent:
     # ── Entry point ────────────────────────────────────────────────────────────
 
     async def run(self):
-        for d in [PROFILE_DIR, LINKEDIN_PROFILE]:
+        for d in [
+            PROFILE_DIR,
+            LINKEDIN_PROFILE,
+            INDEED_FF_PROFILE,
+            INDEED_WEBKIT_PROFILE,
+            INDEED_CHROMIUM_PROFILE,
+        ]:
             d.mkdir(parents=True, exist_ok=True)
 
         ext = _superpowers_path()

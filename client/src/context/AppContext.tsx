@@ -94,8 +94,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [authMode, setAuthMode] = useState<'manual' | 'headless'>('manual')
   const [platformConnecting, setPlatformConnecting] = useState<Platform | null>(null)
   const [linkedinAgent, setLinkedinAgent] = useState<LinkedInAgentStatus>({ connected: false, hasSession: false, username: '' })
-  const [indeedAgent, setIndeedAgent] = useState<IndeedAgentStatus>({ connected: false })
-  const [indeedBrowser, setIndeedBrowser] = useState<string>(() => localStorage.getItem('indeedBrowser') ?? 'browseruse')
+  const [indeedAgent, setIndeedAgent] = useState<IndeedAgentStatus>({ connected: false, hasSession: false })
+  const [indeedBrowser, setIndeedBrowser] = useState<string>(
+    () => localStorage.getItem('indeedBrowser') ?? 'browseruse',
+  )
   const jobsLoadedRef = useRef(false)
 
   const toggleSidebar = useCallback(() => setSidebarOpen((v) => !v), [])
@@ -136,7 +138,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
               setAppState((s) => ({ ...s, linkedinConnected: false }))
             }
             setIndeedAgent(indeedStatus)
-            if (!indeedStatus.connected) {
+            if (!(indeedStatus.connected && indeedStatus.hasSession)) {
               setAppState((s) => ({ ...s, indeedConnected: false }))
             }
           }
@@ -195,7 +197,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       ? await wakeAndCheckIndeedAgent()
       : await fetchIndeedAgentStatus()
     setIndeedAgent(status)
-    if (!status.connected) {
+    if (!(status.connected && status.hasSession)) {
       setAppState((s) => ({ ...s, indeedConnected: false }))
     }
     return status

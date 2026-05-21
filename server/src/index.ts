@@ -34,6 +34,7 @@ import {
   handleIndeedAgentMessage,
   getIndeedAgentStatus,
   waitForIndeedAgentConnection,
+  requestIndeedAgentSessionCheck,
 } from './utils/indeedAgentHub'
 import { sendInterviewReminderEmails } from './utils/interviewReminders'
 import { getNextDailyReminderRunAt } from './utils/interviewReminderSchedule'
@@ -129,8 +130,18 @@ app.get('/api/indeed/agent-status', (_req, res) => {
   res.json(getIndeedAgentStatus())
 })
 
+app.post('/api/indeed/agent/check-session', async (_req, res) => {
+  const status = await requestIndeedAgentSessionCheck()
+  res.json(status)
+})
+
 app.post('/api/indeed/agent/wake-check', async (_req, res) => {
-  const status = await waitForIndeedAgentConnection(25_000, 1_000)
+  const connected = await waitForIndeedAgentConnection(25_000, 1_000)
+  if (!connected.connected) {
+    res.json(connected)
+    return
+  }
+  const status = await requestIndeedAgentSessionCheck(10_000)
   res.json(status)
 })
 
@@ -296,7 +307,7 @@ async function start() {
 
   attachAgentHandlers(
     wssIndeed,
-    (ws, msg) => registerIndeedAgent(ws, String(msg.version ?? '1.0')),
+    (ws, msg) => registerIndeedAgent(ws, Boolean(msg.hasSession), String(msg.version ?? '1.0')),
     (ws, raw) => handleIndeedAgentMessage(ws, raw),
     (ws) => unregisterIndeedAgent(ws),
   )

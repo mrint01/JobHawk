@@ -397,15 +397,29 @@ export async function wakeAndCheckLinkedInAgent(userId: string): Promise<LinkedI
 
 export interface IndeedAgentStatus {
   connected: boolean
+  hasSession: boolean
 }
 
 export async function fetchIndeedAgentStatus(): Promise<IndeedAgentStatus> {
   try {
     const res = await fetch(`${BASE}/api/indeed/agent-status`, { signal: AbortSignal.timeout(4_000) })
-    if (!res.ok) return { connected: false }
+    if (!res.ok) return { connected: false, hasSession: false }
     return await res.json() as IndeedAgentStatus
   } catch {
-    return { connected: false }
+    return { connected: false, hasSession: false }
+  }
+}
+
+export async function checkIndeedAgentSession(): Promise<IndeedAgentStatus> {
+  try {
+    const res = await fetch(`${BASE}/api/indeed/agent/check-session`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(10_000),
+    })
+    if (!res.ok) return { connected: false, hasSession: false }
+    return await res.json() as IndeedAgentStatus
+  } catch {
+    return { connected: false, hasSession: false }
   }
 }
 
@@ -413,12 +427,12 @@ export async function wakeAndCheckIndeedAgent(): Promise<IndeedAgentStatus> {
   try {
     const res = await fetch(`${BASE}/api/indeed/agent/wake-check`, {
       method: 'POST',
-      signal: AbortSignal.timeout(30_000),
+      signal: AbortSignal.timeout(40_000),
     })
-    if (!res.ok) return { connected: false }
+    if (!res.ok) return { connected: false, hasSession: false }
     return await res.json() as IndeedAgentStatus
   } catch {
-    return { connected: false }
+    return { connected: false, hasSession: false }
   }
 }
 

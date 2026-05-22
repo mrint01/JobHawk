@@ -8,6 +8,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import scrapeRouter from './routes/scrape'
 import authRouter, { AUTH_MODE } from './routes/auth'
 import jobsRouter from './routes/jobs'
+import coverLettersRouter from './routes/coverLetters'
 import usersRouter from './routes/users'
 import { sessionsForUser, saveSession, hasSession, clearSession, loadSessionsFromDB } from './utils/sessions'
 import { loadAdminUUID, resolveUserId } from './utils/userStore'
@@ -148,6 +149,7 @@ app.post('/api/indeed/agent/wake-check', async (_req, res) => {
 app.use('/api/auth', authRouter)
 app.use('/api/scrape', scrapeRouter)
 app.use('/api/jobs', jobsRouter)
+app.use('/api/cover-letters', coverLettersRouter)
 app.use('/api/users', usersRouter)
 
 // ── Debug: view Puppeteer screenshots ────────────────────────────────────────

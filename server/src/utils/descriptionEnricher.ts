@@ -141,6 +141,37 @@ async function extractGenericDescription(page: Page, platform: string): Promise<
   return applyMarkers(rawText, config?.startMarkers, config?.endMarkers).slice(0, 20000)
 }
 
+/** Fetch job posting text from the live URL (used for cover letters and enrichment). */
+export async function fetchJobDescriptionFromUrl(job: JobToEnrich): Promise<string> {
+  let page: Page | null = null
+  try {
+    page = await getBrowserPage(false)
+
+    const session = getSession(job.userId, job.platform)
+    if (session?.cookies.length) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await page.setCookie(...(session.cookies as any[]))
+    }
+
+    if (job.platform === 'xing') {
+      await page.goto(job.url, { waitUntil: 'networkidle2', timeout: 30_000 })
+      return await extractXingDescription(page)
+    }
+
+    await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 20_000 })
+    await sleep(1500)
+    return await extractGenericDescription(page, job.platform)
+  } catch (err) {
+    console.error(
+      `[enricher] fetchJobDescriptionFromUrl failed ${job.platform} ${job.url}:`,
+      err instanceof Error ? err.message : String(err),
+    )
+    return ''
+  } finally {
+    if (page) await page.close().catch(() => undefined)
+  }
+}
+
 // ── Background enrichment entry point ────────────────────────────────────────
 
 export function enrichJobsBackground(jobs: JobToEnrich[]): void {
@@ -153,41 +184,12 @@ export function enrichJobsBackground(jobs: JobToEnrich[]): void {
 async function _doEnrich(jobs: JobToEnrich[]): Promise<void> {
   console.log(`[enricher] starting Phase 2 for ${jobs.length} jobs`)
   for (const job of jobs) {
-    let page: Page | null = null
-    try {
-      page = await getBrowserPage(false)
-
-      const session = getSession(job.userId, job.platform)
-      if (session?.cookies.length) {
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        await page.setCookie(...(session.cookies as any[]))
-      }
-
-      let desc = ''
-
-      if (job.platform === 'xing') {
-        // React SPA — wait for network to settle before looking for content
-        await page.goto(job.url, { waitUntil: 'networkidle2', timeout: 30_000 })
-        desc = await extractXingDescription(page)
-      } else {
-        await page.goto(job.url, { waitUntil: 'domcontentloaded', timeout: 20_000 })
-        await sleep(1500)
-        desc = await extractGenericDescription(page, job.platform)
-      }
-
-      if (desc.length > 50) {
-        await updateJobDescriptionById(job.userId, job.id, desc)
-        console.log(`[enricher] ${job.platform} job ${job.id}: ${desc.length} chars`)
-      } else {
-        console.log(`[enricher] ${job.platform} job ${job.id}: no description found`)
-      }
-    } catch (err) {
-      console.error(
-        `[enricher] failed ${job.platform} ${job.url}:`,
-        err instanceof Error ? err.message : String(err),
-      )
-    } finally {
-      if (page) await page.close().catch(() => undefined)
+    const desc = await fetchJobDescriptionFromUrl(job)
+    if (desc.length > 50) {
+      await updateJobDescriptionById(job.userId, job.id, desc)
+      console.log(`[enricher] ${job.platform} job ${job.id}: ${desc.length} chars`)
+    } else {
+      console.log(`[enricher] ${job.platform} job ${job.id}: no description found`)
     }
     await sleep(600 + Math.random() * 800)
   }

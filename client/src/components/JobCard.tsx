@@ -5,6 +5,7 @@ import PlatformBadge from './PlatformBadge'
 import { useApp } from '../context/AppContext'
 import { formatPostedTime } from '../time'
 import JobDescriptionModal from './JobDescriptionModal'
+import CoverLetterButton from './CoverLetterButton'
 
 interface Props { job: Job }
 
@@ -35,6 +36,7 @@ export default function JobCard({ job }: Props) {
           </div>
         </div>
         <div className="flex items-center gap-1.5 flex-shrink-0">
+          <CoverLetterButton job={job} />
           {job.description && (
             <button
               type="button"

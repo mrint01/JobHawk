@@ -88,12 +88,12 @@ INDEED_WEBKIT_PROFILE   = PROFILE_DIR / "webkit_profile_indeed"
 INDEED_CHROMIUM_PROFILE = PROFILE_DIR / "chromium_profile_indeed"
 
 # Baked in at download time; override via env var or --backend flag.
-DEFAULT_BACKEND_URL = "http://localhost:3001"
+DEFAULT_BACKEND_URL ="https://jobhawk-production.up.railway.app"
 # DEFAULT_BACKEND_URL = "http://localhost:3001"
 # DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-production.up.railway.app"
 # Set to False to see the browser window (useful for debugging captchas).
 LINKEDIN_HEADLESS = True
-INDEED_HEADLESS   = False
+INDEED_HEADLESS   = True
 HEARTBEAT_INTERVAL       = 25
 RECONNECT_DELAY          = 5
 MAX_RECONNECT_DELAY      = 60

@@ -438,6 +438,55 @@ export async function wakeAndCheckIndeedAgent(): Promise<IndeedAgentStatus> {
 
 // ── Agent script download ─────────────────────────────────────────────────────
 
+// ── Cover letters ─────────────────────────────────────────────────────────────
+
+export type CoverLetterLanguage = 'en' | 'de'
+
+export interface CoverLetterResult {
+  id: string
+  jobId: string
+  language: CoverLetterLanguage
+  filename: string
+  mode?: 'template' | 'openai'
+  createdAt: string
+  updatedAt: string
+}
+
+export async function generateCoverLetterApi(
+  jobId: string,
+  language: CoverLetterLanguage,
+  userId?: string,
+): Promise<{ ok: boolean; data?: CoverLetterResult; error?: string }> {
+  try {
+    const res = await fetch(`${BASE}/api/cover-letters/job/${jobId}/generate`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...userHeaders(userId) },
+      body: JSON.stringify({ language }),
+      signal: AbortSignal.timeout(180_000),
+    })
+    const body = (await res.json()) as CoverLetterResult & { error?: string }
+    if (!res.ok) return { ok: false, error: body.error ?? `Request failed (${res.status})` }
+    return { ok: true, data: body }
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : 'Network error' }
+  }
+}
+
+export async function downloadCoverLetterBlob(
+  letterId: string,
+  userId?: string,
+): Promise<Blob | null> {
+  try {
+    const res = await fetch(`${BASE}/api/cover-letters/${letterId}/download`, {
+      headers: userHeaders(userId),
+    })
+    if (!res.ok) return null
+    return await res.blob()
+  } catch {
+    return null
+  }
+}
+
 /** Canonical download URL for the unified jobhawk_agent.py script. */
 export function getAgentDownloadUrl(): string {
   return `${BASE}/api/agent/download`

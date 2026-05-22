@@ -39,6 +39,16 @@ function normalizeUrl(url: string): string {
   }
 }
 
+export async function readJobByIdForUser(userId: string, id: string): Promise<Job | null> {
+  const { data } = await supabase
+    .from('jobs')
+    .select('*')
+    .eq('user_id', userId)
+    .eq('id', id)
+    .maybeSingle()
+  return data ? dbRowToJob(data) : null
+}
+
 export async function readJobsForUser(userId: string): Promise<Job[]> {
   await autoRefuseExpiredApplicationsForUser(userId)
   const { data } = await supabase
@@ -411,6 +421,20 @@ export async function updateJobDescriptionById(
     .eq('user_id', userId)
     .is('description', null)
   if (error) console.error('[jobStore] updateJobDescriptionById:', error.message)
+}
+
+/** Overwrite description (e.g. after a richer scrape for cover letters). */
+export async function setJobDescriptionById(
+  userId: string,
+  id: string,
+  description: string,
+): Promise<void> {
+  const { error } = await supabase
+    .from('jobs')
+    .update({ description })
+    .eq('id', id)
+    .eq('user_id', userId)
+  if (error) console.error('[jobStore] setJobDescriptionById:', error.message)
 }
 
 function dbRowToJob(row: Record<string, unknown>): Job {

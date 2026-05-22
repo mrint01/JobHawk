@@ -17,6 +17,7 @@ import PlatformBadge from './PlatformBadge'
 import { useApp } from '../context/AppContext'
 import { formatGermanDate, formatPostedTime } from '../time'
 import JobDescriptionModal from './JobDescriptionModal'
+import CoverLetterButton from './CoverLetterButton'
 
 interface Props { job: Job }
 
@@ -87,6 +88,7 @@ export default function AppliedJobCard({ job }: Props) {
             <span className="truncate">Applied {appliedDate}</span>
           </span>
           <div className="flex items-center gap-1.5 flex-shrink-0">
+            <CoverLetterButton job={job} />
             {job.description && (
               <button
                 type="button"

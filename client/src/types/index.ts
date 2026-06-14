@@ -7,6 +7,7 @@ export type JobStatus =
   | 'technical_interview'
   | 'second_technical_interview'
   | 'refused'
+  | 'ghosted'
   | 'accepted'
 
 export const PIPELINE_STATUSES: JobStatus[] = [
@@ -14,14 +15,24 @@ export const PIPELINE_STATUSES: JobStatus[] = [
   'technical_interview',
   'second_technical_interview',
   'refused',
+  'ghosted',
   'accepted',
 ]
 
-/** In-progress interview stages (excludes terminal accepted/refused). */
+/** In-progress interview stages (excludes terminal accepted/refused/ghosted). */
 export const ACTIVE_PIPELINE_STATUSES: JobStatus[] = [
   'hr_interview',
   'technical_interview',
   'second_technical_interview',
+]
+
+/** Statuses that represent an actual interview happened. */
+export const INTERVIEW_STATUSES: JobStatus[] = [
+  'hr_interview',
+  'technical_interview',
+  'second_technical_interview',
+  'refused',
+  'accepted',
 ]
 
 export type Theme = 'dark' | 'light'

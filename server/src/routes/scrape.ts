@@ -156,14 +156,26 @@ router.get('/stream', (req: Request, res: Response) => {
         send({ type: 'jobs', platform, jobs, progress: 100 })
       } catch (err) {
         send({ type: 'error', platform, error: err instanceof Error ? err.message : String(err) })
+        // continue to next platform — do not abort the whole scrape
       }
       prevWasLinkedInAgent = platform === 'linkedin' && isAgentReady()
     }
-  })()
-    .then(async () => {
+    try {
       const saved = await mergeJobsForUser(userId, allJobs)
       send({ type: 'done', jobs: saved, totalJobs: saved.length })
+    } catch (err) {
+      send({ type: 'error', platform: 'linkedin', error: `Failed to save scraped jobs: ${err instanceof Error ? err.message : String(err)}` })
+      send({ type: 'done', jobs: [], totalJobs: 0 })
+    } finally {
       res.end()
+    }
+  })()
+    .catch((err) => {
+      if (!res.writableEnded) {
+        send({ type: 'error', platform: 'linkedin', error: err instanceof Error ? err.message : String(err) })
+        send({ type: 'done', jobs: [], totalJobs: 0 })
+        res.end()
+      }
     })
     .finally(async () => {
       await closeScrapeBrowser().catch(() => undefined)

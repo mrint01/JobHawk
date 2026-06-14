@@ -77,6 +77,35 @@ from datetime import datetime, timedelta
 from typing import Optional, List, Dict
 from playwright.async_api import BrowserContext, Page
 
+# ── Env (.env next to server/) ─────────────────────────────────────────────────
+def _load_local_env() -> None:
+    """Load server/.env so INDEED_HEADLESS / JOBRADAR_BACKEND_URL work without exporting."""
+    env_file = Path(__file__).resolve().parent.parent / ".env"
+    if not env_file.is_file():
+        return
+    try:
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, val = line.partition("=")
+            key = key.strip()
+            val = val.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = val
+    except OSError:
+        pass
+
+
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
+
+
+_load_local_env()
+
 # ── Config ─────────────────────────────────────────────────────────────────────
 VERSION = "2.0.0"
 
@@ -88,12 +117,12 @@ INDEED_WEBKIT_PROFILE   = PROFILE_DIR / "webkit_profile_indeed"
 INDEED_CHROMIUM_PROFILE = PROFILE_DIR / "chromium_profile_indeed"
 
 # Baked in at download time; override via env var or --backend flag.
-DEFAULT_BACKEND_URL ="https://jobhawk-production.up.railway.app"
+DEFAULT_BACKEND_URL ="https://jobhawk-production-5fff.up.railway.app"
 # DEFAULT_BACKEND_URL = "http://localhost:3001"
-# DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-production.up.railway.app"
-# Set to False to see the browser window (useful for debugging captchas).
-LINKEDIN_HEADLESS = True
-INDEED_HEADLESS   = True
+# DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-production-5fff.up.railway.app"
+# Headless toggles (env: LINKEDIN_HEADLESS, INDEED_HEADLESS). false/0/no = visible browser window.
+LINKEDIN_HEADLESS = _env_bool("LINKEDIN_HEADLESS", True)
+INDEED_HEADLESS   = _env_bool("INDEED_HEADLESS", False)
 HEARTBEAT_INTERVAL       = 25
 RECONNECT_DELAY          = 5
 MAX_RECONNECT_DELAY      = 60
@@ -1247,7 +1276,7 @@ class JobHawkAgent:
             ua = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             ctx = await p.chromium.launch_persistent_context(
                 str(INDEED_CHROMIUM_PROFILE),
-                headless=False,
+                headless=INDEED_HEADLESS,
                 args=[
                     "--no-sandbox",
                     "--disable-dev-shm-usage",
@@ -1340,7 +1369,7 @@ class JobHawkAgent:
     async def _get_indeed_ctx(self) -> BrowserContext:
         """Return the persistent Patchright Indeed context (login + scrape share one profile)."""
         if self.indeed_ctx is None:
-            log.info("[indeed] launching patchright (anti-detect Chrome)…")
+            log.info(f"[indeed] launching patchright (headless={INDEED_HEADLESS})…")
             self.indeed_ctx = await self._open_indeed_ctx(INDEED_BROWSER)
             self.indeed_browser_type = INDEED_BROWSER
             log.info("[indeed] ✅ patchright ready — same browser for login and scrape")
@@ -1378,6 +1407,12 @@ class JobHawkAgent:
             await page.close()
 
     async def _indeed_setup(self):
+        if INDEED_HEADLESS:
+            print("\n=== Indeed Login Setup ===")
+            print("INDEED_HEADLESS=true — no visible browser for manual login.")
+            print("Set INDEED_HEADLESS=false in server/.env (or export it), run this script again,")
+            print("log in when the window opens, then set INDEED_HEADLESS=true if you want headless later.\n")
+            return
         print("\n=== Indeed Login Setup ===")
         print("A browser window will open. Please log in to Indeed (de.indeed.com).")
         print("Uses Patchright (anti-detect Chrome) — same browser for login and scraping.")
@@ -1723,10 +1758,10 @@ class JobHawkAgent:
                 hb.cancel()
 
     async def _run_indeed(self):
-        log.info("[indeed] launching patchright for login + scrape (single browser profile)…")
+        log.info(f"[indeed] launching patchright (headless={INDEED_HEADLESS}) for login + scrape…")
         self.indeed_ctx = await self._open_indeed_ctx(INDEED_BROWSER)
         self.indeed_browser_type = INDEED_BROWSER
-        log.info("[indeed] ✅ patchright ready")
+        log.info(f"[indeed] ✅ patchright ready (headless={INDEED_HEADLESS})")
 
         log.info("[indeed] checking session…")
         if not await self._indeed_logged_in():
@@ -1798,6 +1833,9 @@ def main():
         print("Download this script from your app's Settings page (it bakes in the URL),")
         print("or set JOBRADAR_BACKEND_URL env var.")
         sys.exit(1)
+
+    log.info(f"Indeed browser: headless={INDEED_HEADLESS} (set INDEED_HEADLESS=false in server/.env for a visible window)")
+    log.info(f"LinkedIn browser: headless={LINKEDIN_HEADLESS}")
 
     agent = JobHawkAgent(backend_url)
 

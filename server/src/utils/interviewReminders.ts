@@ -15,6 +15,7 @@ const STATUS_LABEL: Record<Job['status'], string> = {
   technical_interview: 'Technical Interview',
   second_technical_interview: 'Second Technical Interview',
   refused: 'Refused',
+  ghosted: 'Ghosted',
   accepted: 'Accepted',
 }
 

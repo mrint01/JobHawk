@@ -1,7 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { fetchAnalyticsCitiesApi, fetchAnalyticsPlatformsApi, fetchAnalyticsSeriesApi, fetchUsersApi, type AuthUser } from '../services/api'
+
+const CITY_PAGE_SIZE = 8
 
 type Period = 'today' | 'last_day' | 'last_week' | 'last_month' | 'custom'
 
@@ -82,6 +85,7 @@ export default function AnalyticsPage() {
   const [cityBuckets, setCityBuckets] = useState<Array<{ city: string; appliedCount: number }>>([])
   const [platformBuckets, setPlatformBuckets] = useState<Array<{ platform: string; appliedCount: number }>>([])
   const [selectedCity, setSelectedCity] = useState<string>('')
+  const [cityPage, setCityPage] = useState(1)
   const from = useMemo(() => {
     if (period === 'custom') {
       if (!customFrom) return periodStart('last_month')
@@ -113,6 +117,7 @@ export default function AnalyticsPage() {
 
   useEffect(() => {
     setSelectedCity('')
+    setCityPage(1)
   }, [targetUserId])
 
   const chartTotal = series.reduce((sum, item) => sum + item.appliedCount, 0)
@@ -372,16 +377,48 @@ export default function AnalyticsPage() {
             <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-3">Applied totals by city</h3>
             {cityBuckets.length === 0 ? (
               <p className="text-sm text-gray-500 dark:text-slate-400">No city data available.</p>
-            ) : (
-              <div className="space-y-2">
-                {cityBuckets.map((bucket) => (
-                  <div key={bucket.city} className="flex items-center justify-between text-sm">
-                    <span className="text-gray-700 dark:text-slate-300">{bucket.city}</span>
-                    <span className="font-semibold text-gray-900 dark:text-white tabular-nums">{bucket.appliedCount}</span>
+            ) : (() => {
+              const totalCityPages = Math.max(1, Math.ceil(cityBuckets.length / CITY_PAGE_SIZE))
+              const safeCityPage = Math.min(cityPage, totalCityPages)
+              const cityRows = cityBuckets.slice((safeCityPage - 1) * CITY_PAGE_SIZE, safeCityPage * CITY_PAGE_SIZE)
+              return (
+                <>
+                  <div className="space-y-2">
+                    {cityRows.map((bucket) => (
+                      <div key={bucket.city} className="flex items-center justify-between text-sm">
+                        <span className="text-gray-700 dark:text-slate-300">{bucket.city}</span>
+                        <span className="font-semibold text-gray-900 dark:text-white tabular-nums">{bucket.appliedCount}</span>
+                      </div>
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
+                  {totalCityPages > 1 && (
+                    <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100 dark:border-slate-800">
+                      <span className="text-xs text-gray-400 dark:text-slate-500">{safeCityPage}/{totalCityPages}</span>
+                      <div className="flex gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setCityPage((p) => Math.max(1, p - 1))}
+                          disabled={safeCityPage === 1}
+                          className="btn-ghost h-7 w-7 p-0 flex items-center justify-center disabled:opacity-40"
+                          aria-label="Previous"
+                        >
+                          <ChevronLeft className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setCityPage((p) => Math.min(totalCityPages, p + 1))}
+                          disabled={safeCityPage === totalCityPages}
+                          className="btn-ghost h-7 w-7 p-0 flex items-center justify-center disabled:opacity-40"
+                          aria-label="Next"
+                        >
+                          <ChevronRight className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </>
+              )
+            })()}
           </div>
 
           <div className="rounded-2xl border border-gray-200 dark:border-slate-700 bg-white dark:bg-slate-900/60 p-4">

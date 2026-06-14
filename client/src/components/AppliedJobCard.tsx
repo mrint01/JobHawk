@@ -28,7 +28,19 @@ const STATUS_LABEL: Record<Job['status'], string> = {
   technical_interview: 'Technical Interview',
   second_technical_interview: 'Second Technical Interview',
   refused: 'Refused',
+  ghosted: 'Ghosted',
   accepted: 'Accepted',
+}
+
+const STATUS_TONE: Record<Job['status'], string> = {
+  new: 'bg-gray-100 text-gray-600 border-gray-200 dark:bg-slate-700 dark:text-slate-300 dark:border-slate-600',
+  applied: 'bg-emerald-100 text-emerald-700 border-emerald-200 dark:bg-emerald-500/15 dark:text-emerald-400 dark:border-emerald-500/30',
+  hr_interview: 'bg-blue-100 text-blue-700 border-blue-200 dark:bg-blue-500/15 dark:text-blue-300 dark:border-blue-500/30',
+  technical_interview: 'bg-violet-100 text-violet-700 border-violet-200 dark:bg-violet-500/15 dark:text-violet-300 dark:border-violet-500/30',
+  second_technical_interview: 'bg-indigo-100 text-indigo-700 border-indigo-200 dark:bg-indigo-500/15 dark:text-indigo-300 dark:border-indigo-500/30',
+  refused: 'bg-red-100 text-red-700 border-red-200 dark:bg-red-500/15 dark:text-red-400 dark:border-red-500/30',
+  ghosted: 'bg-amber-100 text-amber-700 border-amber-200 dark:bg-amber-500/15 dark:text-amber-400 dark:border-amber-500/30',
+  accepted: 'bg-green-100 text-green-700 border-green-200 dark:bg-green-500/15 dark:text-green-400 dark:border-green-500/30',
 }
 
 function toDatetimeLocalValue(iso?: string): string {
@@ -102,7 +114,7 @@ export default function AppliedJobCard({ job }: Props) {
             <PlatformBadge platform={job.platform} />
           </div>
         </div>
-        <span className="badge mb-3 bg-blue-100 dark:bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-200 dark:border-blue-500/30 w-fit">
+        <span className={`badge mb-3 border w-fit ${STATUS_TONE[job.status]}`}>
           Status: {STATUS_LABEL[job.status]}
         </span>
 

@@ -8,11 +8,11 @@ const APPLICATION_STATUSES: Job['status'][] = [
   'technical_interview',
   'second_technical_interview',
   'refused',
+  'ghosted',
   'accepted',
 ]
 
 const AUTO_REFUSE_ELIGIBLE_STATUSES: Job['status'][] = [
-  'applied',
   'hr_interview',
   'technical_interview',
   'second_technical_interview',
@@ -61,11 +61,19 @@ export async function readJobsForUser(userId: string): Promise<Job[]> {
 
 async function autoRefuseExpiredApplicationsForUser(userId: string): Promise<void> {
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString()
+  // Jobs that had actual interviews but expired → refused
   await supabase
     .from('jobs')
     .update({ status: 'refused' })
     .eq('user_id', userId)
     .in('status', AUTO_REFUSE_ELIGIBLE_STATUSES)
+    .lt('applied_at', cutoff)
+  // Applied-only jobs that expired without any interview → ghosted
+  await supabase
+    .from('jobs')
+    .update({ status: 'ghosted' })
+    .eq('user_id', userId)
+    .eq('status', 'applied')
     .lt('applied_at', cutoff)
 }
 

@@ -7,6 +7,7 @@ export type JobStatus =
   | 'technical_interview'
   | 'second_technical_interview'
   | 'refused'
+  | 'ghosted'
   | 'accepted'
 
 export interface Job {

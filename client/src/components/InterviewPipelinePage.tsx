@@ -9,11 +9,15 @@ import {
   ExternalLink,
   Pencil,
   X,
+  ChevronLeft,
+  ChevronRight,
 } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import type { Job, JobStatus, Platform } from '../types'
-import { ACTIVE_PIPELINE_STATUSES } from '../types'
+import { ACTIVE_PIPELINE_STATUSES, INTERVIEW_STATUSES } from '../types'
 import { formatGermanDateTime } from '../time'
+
+const PAGE_SIZE = 10
 
 const STATUS_OPTIONS: Array<{ value: JobStatus; label: string }> = [
   { value: 'applied', label: 'Applied' },
@@ -21,6 +25,7 @@ const STATUS_OPTIONS: Array<{ value: JobStatus; label: string }> = [
   { value: 'technical_interview', label: 'Technical Interview' },
   { value: 'second_technical_interview', label: 'Second Technical Interview' },
   { value: 'refused', label: 'Refused' },
+  { value: 'ghosted', label: 'Ghosted' },
   { value: 'accepted', label: 'Accepted' },
 ]
 
@@ -31,6 +36,7 @@ const STATUS_META: Record<JobStatus, { label: string; tone: string }> = {
   technical_interview: { label: 'Technical Interview', tone: 'bg-violet-100 text-violet-700 dark:bg-violet-500/15 dark:text-violet-300' },
   second_technical_interview: { label: 'Second Technical Interview', tone: 'bg-indigo-100 text-indigo-700 dark:bg-indigo-500/15 dark:text-indigo-300' },
   refused: { label: 'Refused', tone: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300' },
+  ghosted: { label: 'Ghosted', tone: 'bg-amber-100 text-amber-700 dark:bg-amber-500/15 dark:text-amber-300' },
   accepted: { label: 'Accepted', tone: 'bg-green-100 text-green-700 dark:bg-green-500/15 dark:text-green-300' },
 }
 
@@ -73,15 +79,15 @@ function canonicalNotesPayload(raw?: string): string {
   return serializeInterviewNotes(p.meetUrl, p.details) ?? ''
 }
 
-/** Accepted / refused: no further interviews; reminders are not sent for these (server uses same rule). */
+/** Accepted / refused / ghosted: no further interviews; reminders are not sent for these. */
 function isTerminalPipelineStatus(status: JobStatus): boolean {
-  return status === 'accepted' || status === 'refused'
+  return status === 'accepted' || status === 'refused' || status === 'ghosted'
 }
 
 const REFUSED_LOCK_MS = 5 * 60 * 1000
 
 function isRefusedStatusLocked(job: Job): boolean {
-  if (job.status !== 'refused') return false
+  if (job.status !== 'refused' && job.status !== 'ghosted') return false
   const at = job.statusChangedAt
   if (!at) return true
   const elapsed = Date.now() - new Date(at).getTime()
@@ -144,7 +150,7 @@ function InterviewTimelineCell({ job }: { job: Job }) {
   }
 
   if (isTerminalPipelineStatus(job.status)) {
-    const hint = job.status === 'accepted' ? 'Offer accepted.' : 'Declined.'
+    const hint = job.status === 'accepted' ? 'Offer accepted.' : job.status === 'ghosted' ? 'No response.' : 'Declined.'
     return (
       <div className="min-w-[180px] max-w-[340px]">
         <p className="text-xs text-gray-500 dark:text-slate-500 leading-relaxed">{hint}</p>
@@ -368,6 +374,7 @@ export default function InterviewPipelinePage() {
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   const [sortOrder, setSortOrder] = useState<'date_desc' | 'date_asc'>('date_desc')
+  const [page, setPage] = useState(1)
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -393,9 +400,14 @@ export default function InterviewPipelinePage() {
     return [...rows].sort((a, b) => (dateOf(a) - dateOf(b)) * dir)
   }, [pipelineJobs, query, platformFilter, statusFilter, dateFrom, dateTo, sortOrder])
 
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, totalPages)
+  const pageRows = filtered.slice((safePage - 1) * PAGE_SIZE, safePage * PAGE_SIZE)
+
   const acceptedCount = filtered.filter((j) => j.status === 'accepted').length
   const refusedCount = filtered.filter((j) => j.status === 'refused').length
-  const totalInterviewCount = filtered.length
+  const ghostedCount = filtered.filter((j) => j.status === 'ghosted').length
+  const totalInterviewCount = filtered.filter((j) => INTERVIEW_STATUSES.includes(j.status)).length
   const activeInterviewCount = filtered.filter((j) => ACTIVE_PIPELINE_STATUSES.includes(j.status)).length
 
   return (
@@ -411,13 +423,13 @@ export default function InterviewPipelinePage() {
         </span>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         <div className="card p-4">
           <p className="text-xs text-gray-500 dark:text-slate-400">Total Interview</p>
           <p className="text-2xl font-bold text-blue-600 dark:text-blue-300 mt-1">{totalInterviewCount}</p>
         </div>
         <div className="card p-4">
-          <p className="text-xs text-gray-500 dark:text-slate-400">Active Interviews</p>
+          <p className="text-xs text-gray-500 dark:text-slate-400">Active</p>
           <p className="text-2xl font-bold text-violet-600 dark:text-violet-300 mt-1">{activeInterviewCount}</p>
         </div>
         <div className="card p-4">
@@ -427,6 +439,10 @@ export default function InterviewPipelinePage() {
         <div className="card p-4">
           <p className="text-xs text-gray-500 dark:text-slate-400">Refused</p>
           <p className="text-2xl font-bold text-red-600 dark:text-red-300 mt-1">{refusedCount}</p>
+        </div>
+        <div className="card p-4">
+          <p className="text-xs text-gray-500 dark:text-slate-400">Ghosted</p>
+          <p className="text-2xl font-bold text-amber-600 dark:text-amber-300 mt-1">{ghostedCount}</p>
         </div>
       </div>
 
@@ -494,6 +510,7 @@ export default function InterviewPipelinePage() {
                 setDateFrom('')
                 setDateTo('')
                 setSortOrder('date_desc')
+                setPage(1)
               }}
             >
               Reset filters
@@ -503,6 +520,47 @@ export default function InterviewPipelinePage() {
       </div>
 
       <div className="card overflow-hidden">
+        {filtered.length > PAGE_SIZE && (
+          <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-slate-800">
+            <span className="text-xs text-gray-500 dark:text-slate-400">
+              {filtered.length} results — page {safePage} of {totalPages}
+            </span>
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={safePage === 1}
+                className="btn-ghost h-8 w-8 p-0 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Previous page"
+              >
+                <ChevronLeft className="w-4 h-4" />
+              </button>
+              {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => setPage(p)}
+                  className={`h-8 w-8 rounded-lg text-xs font-medium transition-colors ${
+                    p === safePage
+                      ? 'bg-blue-600 text-white'
+                      : 'btn-ghost'
+                  }`}
+                >
+                  {p}
+                </button>
+              ))}
+              <button
+                type="button"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={safePage === totalPages}
+                className="btn-ghost h-8 w-8 p-0 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
+                aria-label="Next page"
+              >
+                <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1040px] text-sm">
             <thead className="bg-gray-50 dark:bg-slate-800/70 border-b border-gray-200 dark:border-slate-700">
@@ -527,7 +585,7 @@ export default function InterviewPipelinePage() {
                   </td>
                 </tr>
               ) : (
-                filtered.map((job) => (
+                pageRows.map((job) => (
                   <tr key={job.id} className="border-b border-gray-100 dark:border-slate-800 last:border-0 align-top">
                     <td className="px-4 py-3 align-top min-w-[320px] md:min-w-[400px] lg:min-w-[440px] max-w-xl lg:max-w-2xl">
                       <a

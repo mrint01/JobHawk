@@ -58,7 +58,7 @@ router.patch('/:id/apply', async (req: Request, res: Response) => {
     } else if (job.platform === 'indeed' && isIndeedAgentReady()) {
       sendDescribeIndeedJobs([{ url: job.url }], userId)
     } else {
-      enrichJobsBackground([{ id: job.id, url: job.url, platform: job.platform, userId }])
+      enrichJobsBackground([{ id: job.id, url: job.url, platform: job.platform, userId, title: job.title }])
     }
   }
 

@@ -142,7 +142,25 @@ export default function ScrapeForm() {
   const [jobTitle, setJobTitle] = useState('Software Engineer')
   const [location, setLocation] = useState('Cologne, Germany')
   const [useLocationList, setUseLocationList] = useState(false)
+  const [useJobTitleList, setUseJobTitleList] = useState(false)
   const locationOptions = ['Cologne', 'Dusseldorf', 'Dortmund', 'Essen', 'Wuppertal', 'Berlin', 'Munich', 'Hamburg', 'Frankfurt', 'Stuttgart']
+  const jobTitleOptions = [
+    'Software Engineer',
+    'Software Developer',
+    'Full Stack Engineer',
+    'Full Stack Developer',
+    'Full Stack Web Developer',
+    'Full Stack JS Developer',
+    'Backend Software Engineer',
+    'Backend Engineer',
+    'Backend Developer',
+    'Backend Web Developer',
+    'Web Developer',
+    'Java Developer',
+    'Node.js Developer',
+    'React Developer',
+    'Frontend Developer',
+  ]
 
   function handleSubmit(e: FormEvent) {
     e.preventDefault()
@@ -181,18 +199,37 @@ export default function ScrapeForm() {
 
       <form onSubmit={handleSubmit}>
         <div className="grid sm:grid-cols-2 gap-3 mb-4">
-          <div className="relative">
-            <Briefcase className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
-            <input
-              type="text"
-              className="input pl-10"
-              placeholder="Job title (e.g. React Developer)"
-              value={jobTitle}
-              onChange={(e) => setJobTitle(e.target.value)}
-              required
-              disabled={isScraping}
-            />
-          </div>
+          {useJobTitleList ? (
+            <div className="relative">
+              <Briefcase className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none z-10" />
+              <select
+                className="input pl-10 pr-10 appearance-none"
+                value={jobTitle}
+                onChange={(e) => setJobTitle(e.target.value)}
+                disabled={isScraping}
+              >
+                {jobTitleOptions.map((title) => (
+                  <option key={title} value={title}>{title}</option>
+                ))}
+              </select>
+              <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 dark:text-slate-500 text-xs">
+                ▼
+              </span>
+            </div>
+          ) : (
+            <div className="relative">
+              <Briefcase className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400 dark:text-slate-500 pointer-events-none" />
+              <input
+                type="text"
+                className="input pl-10"
+                placeholder="Job title (e.g. React Developer)"
+                value={jobTitle}
+                onChange={(e) => setJobTitle(e.target.value)}
+                required
+                disabled={isScraping}
+              />
+            </div>
+          )}
 
           {useLocationList ? (
             <div className="relative">
@@ -220,7 +257,26 @@ export default function ScrapeForm() {
           )}
         </div>
 
-        <div className="mb-4">
+        <div className="mb-4 space-y-2">
+          <label className="flex items-center gap-2.5 text-sm text-gray-700 dark:text-slate-300">
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-gray-300 dark:border-slate-600"
+              checked={useJobTitleList}
+              onChange={(e) => {
+                const enabled = e.target.checked
+                setUseJobTitleList(enabled)
+                if (enabled && !jobTitleOptions.includes(jobTitle)) {
+                  setJobTitle(jobTitleOptions[0])
+                }
+              }}
+              disabled={isScraping}
+            />
+            <span className="leading-5">
+              Pick job title from a list of similar roles
+            </span>
+          </label>
+
           <label className="flex items-center gap-2.5 text-sm text-gray-700 dark:text-slate-300">
             <input
               type="checkbox"

@@ -117,9 +117,9 @@ INDEED_WEBKIT_PROFILE   = PROFILE_DIR / "webkit_profile_indeed"
 INDEED_CHROMIUM_PROFILE = PROFILE_DIR / "chromium_profile_indeed"
 
 # Baked in at download time; override via env var or --backend flag.
-DEFAULT_BACKEND_URL ="https://jobhawk-production-5fff.up.railway.app"
+DEFAULT_BACKEND_URL ="https://jobhawk-production-c3e2.up.railway.app"
 # DEFAULT_BACKEND_URL = "http://localhost:3001"
-# DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-production-5fff.up.railway.app"
+# DEFAULT_SERVER_BACKEND_URL = "https://jobhawk-production-c3e2.up.railway.app"
 # Headless toggles (env: LINKEDIN_HEADLESS, INDEED_HEADLESS). false/0/no = visible browser window.
 LINKEDIN_HEADLESS = _env_bool("LINKEDIN_HEADLESS", True)
 INDEED_HEADLESS   = _env_bool("INDEED_HEADLESS", False)
@@ -801,7 +801,7 @@ _LI_EXTRACT_JS = """
 # ── LinkedIn scraper ───────────────────────────────────────────────────────────
 
 async def scrape_linkedin(page: Page, keywords: str, location: str, max_jobs: int, progress_cb=None) -> List[Dict]:
-    params = urlencode({"keywords": keywords, "location": location, "f_TPR": "r604800", "sortBy": "DD", "start": "0"})
+    params = urlencode({"keywords": keywords, "location": location, "f_TPR": "r604800", "sortBy": "DD", "start": "0", "f_JT": "F,C", "f_EA": "true"})
     url = f"https://www.linkedin.com/jobs/search/?{params}"
 
     await page.goto(url, wait_until="domcontentloaded", timeout=45_000)

@@ -99,24 +99,3 @@ export function buildIntroParagraph(
 
   return `I am a software engineer with more than four years of experience in backend and full-stack development, currently at OKIT GmbH in Germany. My focus areas include ${stack}. I would welcome the opportunity to contribute to ${contribution}.`
 }
-
-/** Remove a duplicate self-intro if the model wrote one anyway. */
-export function stripLeadingIntroParagraph(body: string, language: CoverLetterLanguage): string {
-  const parts = body.split(/\n{2,}/).map((p) => p.trim()).filter(Boolean)
-  if (parts.length === 0) return body
-
-  const first = parts[0]
-  const isIntro =
-    language === 'de'
-      ? /^ich bin software engineer/i.test(first) || /^als software engineer/i.test(first)
-      : /^i am a software engineer/i.test(first) || /^i am a software developer/i.test(first)
-
-  if (isIntro) return parts.slice(1).join('\n\n')
-  return body.trim()
-}
-
-export function combineIntroWithBody(intro: string, restBody: string, language: CoverLetterLanguage): string {
-  const rest = stripLeadingIntroParagraph(restBody, language)
-  if (!rest) return intro
-  return `${intro}\n\n${rest}`
-}

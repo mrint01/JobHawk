@@ -3,7 +3,7 @@ import type { Job } from '../scrapers/types'
 export type CoverLetterProfile = 'ai_heavy' | 'standard'
 
 const OKIT_METRIC_EN =
-  'At OKIT GmbH, I improved backend transaction performance by approximately 40% for systems serving over 50,000 daily users.'
+  'At OKIT I improved backend transaction performance by about 40% for systems serving over 50,000 daily users.'
 const OKIT_METRIC_DE =
   'Bei OKIT GmbH habe ich die Backend-Performance um ca. 40 % bei Systemen mit über 50.000 täglichen Nutzern verbessert.'
 

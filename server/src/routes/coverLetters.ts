@@ -70,7 +70,11 @@ router.post('/job/:jobId/generate', async (req: Request, res: Response) => {
     const message = err instanceof Error ? err.message : String(err)
     console.error('[cover-letter] generate failed:', message)
     const status =
-      message.includes('OPENAI_API_KEY') || message.includes('COVER_LETTER_MODE=openai') ? 503 : 500
+      message.includes('OPENAI_API_KEY') ||
+      message.includes('COVER_LETTER_MODE=openai') ||
+      message.includes('Claude request failed')
+        ? 503
+        : 500
     res.status(status).json({ error: message })
   }
 })

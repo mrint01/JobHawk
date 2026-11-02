@@ -6,15 +6,9 @@ export function countWords(text: string): number {
   return text.split(/\s+/).filter(Boolean).length
 }
 
-/** How many words OpenAI may write after the fixed intro paragraph. */
-export function getAiParagraphWordBudget(introWordCount: number): { min: number; max: number } {
-  const min = Math.max(140, BODY_WORD_MIN - introWordCount)
-  const max = Math.max(150, BODY_WORD_MAX - introWordCount)
-  return { min, max }
-}
-
 export function maxTokensForWordBudget(wordMax: number): number {
-  return Math.min(480, Math.ceil(wordMax * 1.3))
+  // The model now writes the whole body, so 350 words must fit comfortably.
+  return Math.min(700, Math.ceil(wordMax * 1.45))
 }
 
 /** Hard cap so greeting→sign-off block stays ≤350 words. */

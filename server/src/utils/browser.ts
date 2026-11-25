@@ -18,8 +18,31 @@
 import puppeteer from 'puppeteer-extra'
 import StealthPlugin from 'puppeteer-extra-plugin-stealth'
 import type { Browser, Page } from 'puppeteer'
+import { existsSync } from 'node:fs'
+import { chromium } from 'playwright'
 
 puppeteer.use(StealthPlugin())
+
+/**
+ * Chrome binary for Puppeteer. Puppeteer's own download is skipped
+ * (.puppeteerrc.cjs) to keep deploy builds fast, so we reuse the Chromium
+ * that `playwright install` already put on disk. Order:
+ *   1. PUPPETEER_EXECUTABLE_PATH env override
+ *   2. Puppeteer's bundled Chrome, if a previous install left one
+ *   3. Playwright's Chromium
+ */
+function resolveChromePath(): string | undefined {
+  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH
+  if (fromEnv) return fromEnv
+  try {
+    const bundled = puppeteer.executablePath()
+    if (bundled && existsSync(bundled)) return bundled
+  } catch { /* no bundled Chrome */ }
+  const pw = chromium.executablePath()
+  return existsSync(pw) ? pw : undefined
+}
+
+const CHROME_PATH = resolveChromePath()
 
 let _browser: Browser | null = null
 let _browserLaunching: Promise<Browser> | null = null
@@ -46,6 +69,7 @@ export async function getBrowserPage(
   if (!_browser || !_browser.connected) {
     if (!_browserLaunching) {
       _browserLaunching = puppeteer.launch({
+        executablePath: CHROME_PATH,
         headless: HEADLESS,
         args: [
           '--no-sandbox',
@@ -141,6 +165,7 @@ export async function getAuthBrowserPage(
 ): Promise<Page> {
   if (!_authBrowser || !_authBrowser.connected) {
     _authBrowser = await puppeteer.launch({
+      executablePath: CHROME_PATH,
       headless: false,
       args: [
         '--no-sandbox',

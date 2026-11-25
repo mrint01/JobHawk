@@ -6,8 +6,8 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "postinstall": "npx playwright install chromium firefox webkit",
-    "playwright:install": "npx playwright install --with-deps chromium firefox webkit"
+    "postinstall": "npx playwright install chromium firefox",
+    "playwright:install": "npx playwright install --with-deps chromium firefox"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.278",
